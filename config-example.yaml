@@ -8,13 +8,14 @@ output:
   daily_dir: "./videos/daily"
 
 r2:
-  endpoint_url: "https://youraccount.r2.cloudflarestorage.com"
-  access_key_id: "your acces key"
-  secret_access_key: "your secret key"
-  bucket_name: "northgrove"
+  endpoint_url: "https://<account-id>.r2.cloudflarestorage.com"
+  access_key_id: "YOUR_ACCESS_KEY_ID"
+  secret_access_key: "YOUR_SECRET_ACCESS_KEY"
+  bucket_name: "your-bucket-name"
 
 video:
   fps: 30  # 144 images/day at 30fps = ~5 seconds per day
   codec: "libx264"  # Use H.264 for compatibility
-  preset: "medium"  # Balance between speed and compression
-  crf: 23  # Quality (lower=better, 23 is good default)
+  preset: "slow"  # Better compression (worth it for timelapses)
+  crf: 28  # Higher = more compression (28 is good for timelapses)
+  max_width: 1920  # Resize to 1080p max (keeps aspect ratio)
