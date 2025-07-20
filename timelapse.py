@@ -201,10 +201,10 @@ class TimelapseProcessor:
 
         return None
     
-    def get_current_week_videos(self, all_videos):
-        """Get videos from the current week (Monday to today)."""
+    def get_all_weeks(self, all_videos):
+        """Get all videos grouped by week (Monday to Sunday)."""
         if not all_videos:
-            return []
+            return {}
         
         # Parse dates from video filenames
         videos_with_dates = []
@@ -212,7 +212,7 @@ class TimelapseProcessor:
             # Extract date from filename like TLST04A00879_250720070000.mp4
             date_str = video.stem.split('_')[1][:6]  # YYMMDD
             try:
-                # Parse date (assuming 2025 for YY=25)
+                # Parse date
                 year = 2000 + int(date_str[:2])
                 month = int(date_str[2:4])
                 day = int(date_str[4:6])
@@ -222,24 +222,24 @@ class TimelapseProcessor:
                 continue
         
         if not videos_with_dates:
-            return []
+            return {}
         
-        # Get the most recent date
-        latest_date = max(d[1] for d in videos_with_dates)
-        
-        # Find Monday of the current week
-        days_since_monday = latest_date.weekday()  # Monday = 0, Sunday = 6
-        monday = latest_date - timedelta(days=days_since_monday)
-        
-        # Filter videos from Monday onwards
-        week_videos = []
+        # Group videos by week
+        weeks = {}
         for video, date in videos_with_dates:
-            if date >= monday and date <= latest_date:
-                week_videos.append(video)
+            # Find Monday of this date's week
+            days_since_monday = date.weekday()  # Monday = 0, Sunday = 6
+            monday = date - timedelta(days=days_since_monday)
+            
+            if monday not in weeks:
+                weeks[monday] = []
+            weeks[monday].append(video)
         
-        # Sort by date
-        week_videos.sort(key=lambda v: v.stem)
-        return week_videos
+        # Sort videos within each week
+        for monday, videos in weeks.items():
+            videos.sort(key=lambda v: v.stem)
+        
+        return weeks
 
     def upload_to_r2(self, file_path, key):
         """Upload a file to R2."""
@@ -260,7 +260,7 @@ class TimelapseProcessor:
         except Exception as e:
             print(f"  Upload failed: {e}")
 
-    def process(self, days_limit=None):
+    def process(self, days_limit=None, upload_all_weeks=False):
         """Main processing function."""
         print("Starting timelapse processing...")
 
@@ -292,18 +292,43 @@ class TimelapseProcessor:
         print("Creating full timelapse...")
         full_video = self.create_combined_video(all_daily_videos, "timelapse_full.mp4")
 
-        # Create current week video (Monday to today)
-        print("Creating current week video...")
-        week_videos = self.get_current_week_videos(all_daily_videos)
-        if week_videos:
-            # Get the Monday date for the filename
-            first_video_name = week_videos[0].stem
-            date_str = first_video_name.split('_')[1][:6]  # YYMMDD
-            week_filename = f"timelapse_week_{date_str}.mp4"
-            week_video = self.create_combined_video(week_videos, week_filename)
-        else:
-            week_video = None
-            week_filename = None
+        # Create all week videos
+        print("Creating week videos...")
+        all_weeks = self.get_all_weeks(all_daily_videos)
+        
+        # Find the current week for special handling
+        current_week_monday = None
+        if all_weeks:
+            # The last week is the current week
+            current_week_monday = max(all_weeks.keys())
+        
+        week_video = None  # This will be the current week video
+        week_videos_to_upload = []  # Track all weeks if upload_all_weeks is True
+        
+        for monday_date, week_videos in all_weeks.items():
+            # Create filename based on Monday's date
+            monday_str = monday_date.strftime("%y%m%d")
+            week_filename = f"timelapse_week_{monday_str}.mp4"
+            week_path = Path(self.config['output']['videos_dir']) / week_filename
+            
+            # Check if this week's video already exists
+            if week_path.exists() and monday_date != current_week_monday:
+                print(f"  Week {monday_str} video already exists, skipping")
+                if upload_all_weeks:
+                    week_videos_to_upload.append(week_path)
+                continue
+            
+            print(f"  Creating week {monday_str} video ({len(week_videos)} days)")
+            created_video = self.create_combined_video(week_videos, week_filename)
+            
+            if created_video:
+                # Keep track of current week video for upload
+                if monday_date == current_week_monday:
+                    week_video = created_video
+                
+                # Add to upload list if uploading all weeks
+                if upload_all_weeks:
+                    week_videos_to_upload.append(created_video)
 
         # Get latest image from ALL folders (not just processed ones)
         all_folders = self.get_daily_folders()
@@ -333,6 +358,13 @@ class TimelapseProcessor:
         if all_daily_videos:
             latest_day_video = all_daily_videos[-1]
             self.upload_to_r2(latest_day_video, "timelapse/day.mp4")
+        
+        # Upload all historical week videos if requested
+        if upload_all_weeks and week_videos_to_upload:
+            print(f"\nUploading {len(week_videos_to_upload)} historical week videos...")
+            for week_video_path in week_videos_to_upload:
+                week_key = f"timelapse/weeks/{week_video_path.stem}.mp4"
+                self.upload_to_r2(week_video_path, week_key)
 
         print("\nProcessing complete!")
 
@@ -344,6 +376,8 @@ if __name__ == "__main__":
                         help='Process only the last N days')
     parser.add_argument('--config', default='config.yaml',
                         help='Path to config file (default: config.yaml)')
+    parser.add_argument('--upload-all-weeks', action='store_true',
+                        help='Upload all historical week videos to R2 (not just current week)')
     
     args = parser.parse_args()
     
@@ -353,5 +387,5 @@ if __name__ == "__main__":
         upload_enabled=not args.no_upload
     )
     
-    # Process with optional days limit
-    processor.process(days_limit=args.days)
+    # Process with optional days limit and upload settings
+    processor.process(days_limit=args.days, upload_all_weeks=args.upload_all_weeks)
