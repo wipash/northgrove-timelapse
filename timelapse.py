@@ -97,7 +97,7 @@ class TimelapseProcessor:
         images.sort(key=safe_sort_key)
         return images
 
-    def create_daily_video(self, folder_info):
+    def create_daily_video(self, folder_info, is_today=False):
         """Create a video from a single day's images."""
         print(f"Processing {folder_info['name']}...")
 
@@ -108,10 +108,6 @@ class TimelapseProcessor:
 
         # Output path for daily video
         output_path = Path(self.config['output']['daily_dir']) / f"{folder_info['name']}.mp4"
-
-        # Check if this is today's folder (latest folder)
-        all_folders = self.get_daily_folders()
-        is_today = all_folders and folder_info['name'] == all_folders[-1]['name']
 
         # Skip if already exists and in processed list, UNLESS it's today's folder
         if output_path.exists() and folder_info['name'] in self.state['processed_folders'] and not is_today:
@@ -368,8 +364,12 @@ class TimelapseProcessor:
             print(f"Found {len(folders)} daily folders")
 
         # Process new daily videos
+        # Determine which folder is "today" (the latest one) to avoid repeated directory scans
+        latest_folder_name = folders[-1]['name'] if folders else None
+        
         for folder_info in tqdm(folders, desc="Creating daily videos"):
-            self.create_daily_video(folder_info)
+            is_today = folder_info['name'] == latest_folder_name
+            self.create_daily_video(folder_info, is_today=is_today)
 
         # Get ALL existing daily videos (not just the ones we just created)
         daily_videos_dir = Path(self.config['output']['daily_dir'])
