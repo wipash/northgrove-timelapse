@@ -130,8 +130,19 @@ class TimelapseProcessor:
                 '-crf', str(self.config['video']['crf']),
                 '-pix_fmt', 'yuv420p',  # For compatibility
                 '-movflags', '+faststart',  # For web streaming
-                str(output_path)
             ]
+            
+            # Add scaling filter if max_width is specified
+            if 'max_width' in self.config['video']:
+                max_width = self.config['video']['max_width']
+                # Scale down only if wider than max_width, maintaining aspect ratio
+                cmd.extend(['-vf', f'scale={max_width}:-2:flags=lanczos'])
+            
+            # Add bitrate limit if specified (optional, CRF usually better)
+            if 'bitrate' in self.config['video']:
+                cmd.extend(['-b:v', self.config['video']['bitrate']])
+            
+            cmd.append(str(output_path))
 
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
