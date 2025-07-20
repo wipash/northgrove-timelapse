@@ -54,6 +54,7 @@ uv run python timelapse.py --no-upload --days 2
 4. Uploads to R2:
    - `timelapse/full.mp4` - Complete timelapse
    - `timelapse/week.mp4` - Last 7 days
+   - `timelapse/day.mp4` - Today's video (latest day)
    - `timelapse/latest.jpg` - Most recent photo
 
 ## State tracking

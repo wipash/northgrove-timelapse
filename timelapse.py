@@ -277,6 +277,11 @@ class TimelapseProcessor:
 
         if latest_image:
             self.upload_to_r2(latest_dest, "timelapse/latest.jpg")
+        
+        # Upload the latest day's video
+        if all_daily_videos:
+            latest_day_video = all_daily_videos[-1]
+            self.upload_to_r2(latest_day_video, "timelapse/day.mp4")
 
         print("\nProcessing complete!")
 
