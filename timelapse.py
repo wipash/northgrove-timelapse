@@ -97,10 +97,17 @@ class TimelapseProcessor:
         # Output path for daily video
         output_path = Path(self.config['output']['daily_dir']) / f"{folder_info['name']}.mp4"
 
-        # Skip if already exists and in processed list
-        if output_path.exists() and folder_info['name'] in self.state['processed_folders']:
+        # Check if this is today's folder (latest folder)
+        all_folders = self.get_daily_folders()
+        is_today = all_folders and folder_info['name'] == all_folders[-1]['name']
+
+        # Skip if already exists and in processed list, UNLESS it's today's folder
+        if output_path.exists() and folder_info['name'] in self.state['processed_folders'] and not is_today:
             print(f"  Daily video already exists, skipping")
             return output_path
+        
+        if is_today:
+            print(f"  Reprocessing today's folder with {len(images)} images")
 
         # Create video using ffmpeg with image sequence
         # First, create a temporary file list
