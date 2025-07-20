@@ -81,8 +81,20 @@ class TimelapseProcessor:
             if file.suffix.lower() == '.jpg' and file.name.startswith('TLS_'):
                 images.append(file)
 
-        # Sort by filename number
-        images.sort(key=lambda x: int(x.stem.split('_')[1]))
+        # Sort by filename number (handle malformed filenames gracefully)
+        def safe_sort_key(x):
+            try:
+                # Extract the number part, handling cases like "000000072 (2)"
+                parts = x.stem.split('_')
+                if len(parts) >= 2:
+                    # Remove any non-numeric characters from the number
+                    number_str = ''.join(c for c in parts[1].split()[0] if c.isdigit())
+                    return int(number_str) if number_str else 0
+                return 0
+            except:
+                return 0
+        
+        images.sort(key=safe_sort_key)
         return images
 
     def create_daily_video(self, folder_info):
