@@ -200,6 +200,46 @@ class TimelapseProcessor:
                 return images[-1]  # Last image of the day
 
         return None
+    
+    def get_current_week_videos(self, all_videos):
+        """Get videos from the current week (Monday to today)."""
+        if not all_videos:
+            return []
+        
+        # Parse dates from video filenames
+        videos_with_dates = []
+        for video in all_videos:
+            # Extract date from filename like TLST04A00879_250720070000.mp4
+            date_str = video.stem.split('_')[1][:6]  # YYMMDD
+            try:
+                # Parse date (assuming 2025 for YY=25)
+                year = 2000 + int(date_str[:2])
+                month = int(date_str[2:4])
+                day = int(date_str[4:6])
+                date = datetime(year, month, day)
+                videos_with_dates.append((video, date))
+            except:
+                continue
+        
+        if not videos_with_dates:
+            return []
+        
+        # Get the most recent date
+        latest_date = max(d[1] for d in videos_with_dates)
+        
+        # Find Monday of the current week
+        days_since_monday = latest_date.weekday()  # Monday = 0, Sunday = 6
+        monday = latest_date - timedelta(days=days_since_monday)
+        
+        # Filter videos from Monday onwards
+        week_videos = []
+        for video, date in videos_with_dates:
+            if date >= monday and date <= latest_date:
+                week_videos.append(video)
+        
+        # Sort by date
+        week_videos.sort(key=lambda v: v.stem)
+        return week_videos
 
     def upload_to_r2(self, file_path, key):
         """Upload a file to R2."""
@@ -252,10 +292,18 @@ class TimelapseProcessor:
         print("Creating full timelapse...")
         full_video = self.create_combined_video(all_daily_videos, "timelapse_full.mp4")
 
-        # Create last 7 days video
-        print("Creating last 7 days video...")
-        recent_videos = all_daily_videos[-7:] if len(all_daily_videos) >= 7 else all_daily_videos
-        week_video = self.create_combined_video(recent_videos, "timelapse_week.mp4")
+        # Create current week video (Monday to today)
+        print("Creating current week video...")
+        week_videos = self.get_current_week_videos(all_daily_videos)
+        if week_videos:
+            # Get the Monday date for the filename
+            first_video_name = week_videos[0].stem
+            date_str = first_video_name.split('_')[1][:6]  # YYMMDD
+            week_filename = f"timelapse_week_{date_str}.mp4"
+            week_video = self.create_combined_video(week_videos, week_filename)
+        else:
+            week_video = None
+            week_filename = None
 
         # Get latest image from ALL folders (not just processed ones)
         all_folders = self.get_daily_folders()
@@ -273,6 +321,9 @@ class TimelapseProcessor:
             self.upload_to_r2(full_video, "timelapse/full.mp4")
 
         if week_video and week_video.exists():
+            # Upload with unique week name and also as current week
+            week_key = f"timelapse/weeks/{week_video.stem}.mp4"
+            self.upload_to_r2(week_video, week_key)
             self.upload_to_r2(week_video, "timelapse/week.mp4")
 
         if latest_image:
