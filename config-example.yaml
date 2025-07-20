@@ -1,0 +1,20 @@
+# Timelapse configuration
+source:
+  path: "/mnt/h/My Drive/ATLI/T04A00879"
+  folder_pattern: "TLST04A00879_"  # Prefix for daily folders
+
+output:
+  videos_dir: "./videos"
+  daily_dir: "./videos/daily"
+
+r2:
+  endpoint_url: "https://youraccount.r2.cloudflarestorage.com"
+  access_key_id: "your acces key"
+  secret_access_key: "your secret key"
+  bucket_name: "northgrove"
+
+video:
+  fps: 30  # 144 images/day at 30fps = ~5 seconds per day
+  codec: "libx264"  # Use H.264 for compatibility
+  preset: "medium"  # Balance between speed and compression
+  crf: 23  # Quality (lower=better, 23 is good default)

@@ -1,0 +1,18 @@
+[project]
+name = "northgrove-timelapse"
+version = "0.1.0"
+description = "Builds timelapse videos from a directory of images."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.39.9",
+    "pillow>=11.3.0",
+    "python-dateutil>=2.9.0.post0",
+    "pyyaml>=6.0.2",
+    "tqdm>=4.67.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.4",
+]
