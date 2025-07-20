@@ -251,6 +251,76 @@ class TimelapseProcessor:
             videos.sort(key=lambda v: v.stem)
         
         return weeks
+    
+    def generate_metadata(self, all_daily_videos, week_video, latest_image):
+        """Generate metadata JSON for web frontend."""
+        metadata = {
+            "last_updated": datetime.now().isoformat(),
+            "total_days": len(all_daily_videos),
+            "latest_image": None,
+            "latest_day": None,
+            "current_week": None,
+            "date_range": {
+                "start": None,
+                "end": None
+            }
+        }
+        
+        if all_daily_videos:
+            # Parse dates from video filenames
+            dates = []
+            for video in all_daily_videos:
+                date_str = video.stem.split('_')[1][:6]  # YYMMDD
+                try:
+                    year = 2000 + int(date_str[:2])
+                    month = int(date_str[2:4])
+                    day = int(date_str[4:6])
+                    date = datetime(year, month, day)
+                    dates.append(date)
+                except:
+                    continue
+            
+            if dates:
+                dates.sort()
+                metadata["date_range"]["start"] = dates[0].isoformat()
+                metadata["date_range"]["end"] = dates[-1].isoformat()
+                metadata["latest_day"] = dates[-1].isoformat()
+        
+        if latest_image:
+            # Get the parent folder name for the latest image
+            folder_name = latest_image.parent.name
+            date_str = folder_name.split('_')[1][:6]  # YYMMDD
+            try:
+                year = 2000 + int(date_str[:2])
+                month = int(date_str[2:4])
+                day = int(date_str[4:6])
+                date = datetime(year, month, day)
+                metadata["latest_image"] = {
+                    "date": date.isoformat(),
+                    "filename": latest_image.name
+                }
+            except:
+                pass
+        
+        if week_video:
+            # Parse week start date from filename
+            week_date_str = week_video.stem.split('_')[2]  # YYMMDD from timelapse_week_YYMMDD
+            try:
+                year = 2000 + int(week_date_str[:2])
+                month = int(week_date_str[2:4])
+                day = int(week_date_str[4:6])
+                week_start = datetime(year, month, day)
+                # Week end is 6 days later
+                week_end = week_start + timedelta(days=6)
+                metadata["current_week"] = {
+                    "start": week_start.isoformat(),
+                    "end": week_end.isoformat(),
+                    "monday_date": week_date_str
+                }
+            except:
+                pass
+        
+        return metadata
 
     def upload_to_r2(self, file_path, key):
         """Upload a file to R2."""
@@ -376,6 +446,17 @@ class TimelapseProcessor:
             for week_video_path in week_videos_to_upload:
                 week_key = f"timelapse/weeks/{week_video_path.stem}.mp4"
                 self.upload_to_r2(week_video_path, week_key)
+        
+        # Generate and upload metadata for web frontend
+        print("\nGenerating metadata...")
+        metadata = self.generate_metadata(all_daily_videos, week_video, latest_image)
+        
+        # Save metadata locally and upload
+        metadata_path = Path(self.config['output']['videos_dir']) / "metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        self.upload_to_r2(metadata_path, "timelapse/metadata.json")
 
         print("\nProcessing complete!")
 

@@ -63,6 +63,32 @@ uv run python timelapse.py --upload-all-weeks
    - `timelapse/weeks/timelapse_week_YYMMDD.mp4` - Archived weekly videos (named by Monday's date)
    - `timelapse/day.mp4` - Today's video (latest day)
    - `timelapse/latest.jpg` - Most recent photo
+   - `timelapse/metadata.json` - Metadata for web frontend (dates, counts, etc.)
+
+## Metadata for Web Frontend
+
+The tool generates `timelapse/metadata.json` with information for your web frontend:
+
+```json
+{
+  "last_updated": "2025-07-21T10:30:00.123456",
+  "total_days": 150,
+  "latest_image": {
+    "date": "2025-07-21T00:00:00",
+    "filename": "TLS_000000144.jpg"
+  },
+  "latest_day": "2025-07-21T00:00:00",
+  "current_week": {
+    "start": "2025-07-21T00:00:00",
+    "end": "2025-07-27T00:00:00",
+    "monday_date": "250721"
+  },
+  "date_range": {
+    "start": "2025-02-21T00:00:00",
+    "end": "2025-07-21T00:00:00"
+  }
+}
+```
 
 ## State tracking
 
