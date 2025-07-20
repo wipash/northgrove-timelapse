@@ -19,3 +19,9 @@ video:
   preset: "slow"  # Better compression (worth it for timelapses)
   crf: 28  # Higher = more compression (28 is good for timelapses)
   max_width: 1920  # Resize to 1080p max (keeps aspect ratio)
+  
+  # Additional compression for full timelapse
+  full_video:
+    crf: 32  # Higher compression for full video (32 vs 28)
+    max_width: 1280  # Smaller resolution for full video (720p)
+    fps: 20  # Lower framerate for full video

@@ -169,7 +169,7 @@ class TimelapseProcessor:
             # Clean up temp file
             os.unlink(list_file)
 
-    def create_combined_video(self, video_files, output_name):
+    def create_combined_video(self, video_files, output_name, use_full_compression=False):
         """Combine multiple video files into one."""
         if not video_files:
             return None
@@ -185,14 +185,42 @@ class TimelapseProcessor:
                 f.write(f"file '{abs_path}'\n")
 
         try:
-            cmd = [
-                'ffmpeg', '-y',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', list_file,
-                '-c', 'copy',  # Just concatenate, don't re-encode
-                str(output_path)
-            ]
+            if use_full_compression and 'full_video' in self.config['video']:
+                # Re-encode with higher compression for full video
+                full_config = self.config['video']['full_video']
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat',
+                    '-safe', '0',
+                    '-i', list_file,
+                    '-c:v', self.config['video']['codec'],
+                    '-preset', self.config['video']['preset'],
+                    '-crf', str(full_config.get('crf', self.config['video']['crf'])),
+                    '-pix_fmt', 'yuv420p',
+                    '-movflags', '+faststart'
+                ]
+                
+                # Add scaling for full video
+                if 'max_width' in full_config:
+                    max_width = full_config['max_width']
+                    cmd.extend(['-vf', f'scale={max_width}:-2:flags=lanczos'])
+                
+                # Add framerate adjustment for full video
+                if 'fps' in full_config:
+                    fps = full_config['fps']
+                    cmd.extend(['-r', str(fps)])
+                
+                cmd.append(str(output_path))
+            else:
+                # Just concatenate without re-encoding (for week videos)
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat',
+                    '-safe', '0',
+                    '-i', list_file,
+                    '-c', 'copy',  # Just concatenate, don't re-encode
+                    str(output_path)
+                ]
 
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
@@ -381,9 +409,9 @@ class TimelapseProcessor:
             
         print(f"\nFound {len(all_daily_videos)} total daily videos")
 
-        # Create full timelapse from ALL daily videos
+        # Create full timelapse from ALL daily videos with extra compression
         print("Creating full timelapse...")
-        full_video = self.create_combined_video(all_daily_videos, "timelapse_full.mp4")
+        full_video = self.create_combined_video(all_daily_videos, "timelapse_full.mp4", use_full_compression=True)
 
         # Create all week videos
         print("Creating week videos...")
