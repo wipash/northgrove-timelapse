@@ -83,6 +83,22 @@ The tool generates `timelapse/metadata.json` with information for your web front
     "end": "2025-07-27T00:00:00",
     "monday_date": "250721"
   },
+  "weekly_videos": [
+    {
+      "filename": "timelapse_week_250714.mp4",
+      "monday_date": "250714",
+      "start": "2025-07-14T00:00:00",
+      "end": "2025-07-20T00:00:00",
+      "r2_path": "timelapse/weeks/timelapse_week_250714.mp4"
+    },
+    {
+      "filename": "timelapse_week_250721.mp4",
+      "monday_date": "250721",
+      "start": "2025-07-21T00:00:00",
+      "end": "2025-07-27T00:00:00",
+      "r2_path": "timelapse/weeks/timelapse_week_250721.mp4"
+    }
+  ],
   "date_range": {
     "start": "2025-02-21T00:00:00",
     "end": "2025-07-21T00:00:00"

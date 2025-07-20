@@ -296,6 +296,7 @@ class TimelapseProcessor:
             "latest_image": None,
             "latest_day": None,
             "current_week": None,
+            "weekly_videos": [],
             "date_range": {
                 "start": None,
                 "end": None
@@ -355,6 +356,33 @@ class TimelapseProcessor:
                 }
             except:
                 pass
+        
+        # Get all week videos from the videos directory
+        videos_dir = Path(self.config['output']['videos_dir'])
+        week_files = list(videos_dir.glob("timelapse_week_*.mp4"))
+        
+        for week_file in sorted(week_files):
+            # Parse week start date from filename
+            week_date_str = week_file.stem.split('_')[2]  # YYMMDD from timelapse_week_YYMMDD
+            try:
+                year = 2000 + int(week_date_str[:2])
+                month = int(week_date_str[2:4])
+                day = int(week_date_str[4:6])
+                week_start = datetime(year, month, day)
+                week_end = week_start + timedelta(days=6)
+                
+                metadata["weekly_videos"].append({
+                    "filename": week_file.name,
+                    "monday_date": week_date_str,
+                    "start": week_start.isoformat(),
+                    "end": week_end.isoformat(),
+                    "r2_path": f"timelapse/weeks/{week_file.name}"
+                })
+            except:
+                continue
+        
+        # Sort weekly videos by date
+        metadata["weekly_videos"].sort(key=lambda x: x["monday_date"])
         
         return metadata
 
