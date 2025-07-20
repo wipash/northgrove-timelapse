@@ -9,6 +9,7 @@ import json
 import yaml
 import boto3
 import subprocess
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 from tqdm import tqdm
@@ -16,24 +17,28 @@ import tempfile
 import shutil
 
 class TimelapseProcessor:
-    def __init__(self, config_path="config.yaml"):
+    def __init__(self, config_path="config.yaml", upload_enabled=True):
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
 
         self.state_file = Path("state.json")
         self.state = self.load_state()
+        self.upload_enabled = upload_enabled
 
         # Create output directories
         Path(self.config['output']['videos_dir']).mkdir(exist_ok=True)
         Path(self.config['output']['daily_dir']).mkdir(exist_ok=True)
 
-        # Initialize R2 client (S3 compatible)
-        self.s3_client = boto3.client(
-            's3',
-            endpoint_url=self.config['r2']['endpoint_url'],
-            aws_access_key_id=self.config['r2']['access_key_id'],
-            aws_secret_access_key=self.config['r2']['secret_access_key']
-        )
+        # Initialize R2 client (S3 compatible) only if uploads are enabled
+        if self.upload_enabled:
+            self.s3_client = boto3.client(
+                's3',
+                endpoint_url=self.config['r2']['endpoint_url'],
+                aws_access_key_id=self.config['r2']['access_key_id'],
+                aws_secret_access_key=self.config['r2']['secret_access_key']
+            )
+        else:
+            self.s3_client = None
 
     def load_state(self):
         """Load processing state from file."""
@@ -180,6 +185,10 @@ class TimelapseProcessor:
 
     def upload_to_r2(self, file_path, key):
         """Upload a file to R2."""
+        if not self.upload_enabled:
+            print(f"Upload disabled: Would upload {key} to R2")
+            return
+            
         print(f"Uploading {key} to R2...")
         try:
             with open(file_path, 'rb') as f:
@@ -193,13 +202,19 @@ class TimelapseProcessor:
         except Exception as e:
             print(f"  Upload failed: {e}")
 
-    def process(self):
+    def process(self, days_limit=None):
         """Main processing function."""
         print("Starting timelapse processing...")
 
         # Get all daily folders
         folders = self.get_daily_folders()
-        print(f"Found {len(folders)} daily folders")
+        
+        # Limit to last N days if specified
+        if days_limit:
+            folders = folders[-days_limit:]
+            print(f"Processing last {days_limit} days ({len(folders)} folders)")
+        else:
+            print(f"Found {len(folders)} daily folders")
 
         # Process new daily videos
         daily_videos = []
@@ -240,5 +255,21 @@ class TimelapseProcessor:
         print("\nProcessing complete!")
 
 if __name__ == "__main__":
-    processor = TimelapseProcessor()
-    processor.process()
+    parser = argparse.ArgumentParser(description="Process timelapse images and create videos")
+    parser.add_argument('--no-upload', action='store_true', 
+                        help='Disable uploads to R2 (for testing)')
+    parser.add_argument('--days', type=int, metavar='N',
+                        help='Process only the last N days')
+    parser.add_argument('--config', default='config.yaml',
+                        help='Path to config file (default: config.yaml)')
+    
+    args = parser.parse_args()
+    
+    # Create processor with upload setting
+    processor = TimelapseProcessor(
+        config_path=args.config,
+        upload_enabled=not args.no_upload
+    )
+    
+    # Process with optional days limit
+    processor.process(days_limit=args.days)
