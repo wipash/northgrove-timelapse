@@ -126,7 +126,10 @@ class TimelapseProcessor:
                 str(output_path)
             ]
 
-            subprocess.run(cmd, check=True, capture_output=True)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  Error creating video: {result.stderr}")
+                raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
             print(f"  Created daily video: {output_path.name}")
 
             # Update state
@@ -147,11 +150,13 @@ class TimelapseProcessor:
 
         output_path = Path(self.config['output']['videos_dir']) / output_name
 
-        # Create concat list
+        # Create concat list with absolute paths
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
             list_file = f.name
             for video in video_files:
-                f.write(f"file '{video}'\n")
+                # Ensure we use absolute paths
+                abs_path = Path(video).absolute()
+                f.write(f"file '{abs_path}'\n")
 
         try:
             cmd = [
@@ -163,7 +168,13 @@ class TimelapseProcessor:
                 str(output_path)
             ]
 
-            subprocess.run(cmd, check=True, capture_output=True)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Error combining videos: {result.stderr}")
+                # Try to read the concat file for debugging
+                with open(list_file, 'r') as f:
+                    print(f"Concat file contents:\n{f.read()}")
+                raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
             print(f"Created combined video: {output_name}")
             return output_path
 
@@ -217,23 +228,31 @@ class TimelapseProcessor:
             print(f"Found {len(folders)} daily folders")
 
         # Process new daily videos
-        daily_videos = []
         for folder_info in tqdm(folders, desc="Creating daily videos"):
-            video_path = self.create_daily_video(folder_info)
-            if video_path and video_path.exists():
-                daily_videos.append(video_path)
+            self.create_daily_video(folder_info)
 
-        # Create full timelapse
-        print("\nCreating full timelapse...")
-        full_video = self.create_combined_video(daily_videos, "timelapse_full.mp4")
+        # Get ALL existing daily videos (not just the ones we just created)
+        daily_videos_dir = Path(self.config['output']['daily_dir'])
+        all_daily_videos = sorted(daily_videos_dir.glob("*.mp4"))
+        
+        if not all_daily_videos:
+            print("No daily videos found to combine")
+            return
+            
+        print(f"\nFound {len(all_daily_videos)} total daily videos")
+
+        # Create full timelapse from ALL daily videos
+        print("Creating full timelapse...")
+        full_video = self.create_combined_video(all_daily_videos, "timelapse_full.mp4")
 
         # Create last 7 days video
         print("Creating last 7 days video...")
-        recent_videos = daily_videos[-7:] if len(daily_videos) >= 7 else daily_videos
+        recent_videos = all_daily_videos[-7:] if len(all_daily_videos) >= 7 else all_daily_videos
         week_video = self.create_combined_video(recent_videos, "timelapse_week.mp4")
 
-        # Get latest image
-        latest_image = self.get_latest_image(folders)
+        # Get latest image from ALL folders (not just processed ones)
+        all_folders = self.get_daily_folders()
+        latest_image = self.get_latest_image(all_folders)
 
         # Copy latest image to videos directory for easy upload
         if latest_image:
