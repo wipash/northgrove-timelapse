@@ -26,6 +26,7 @@ uv run python timelapse.py
 - `--days N` - Process only the last N days
 - `--config FILE` - Use alternate config file (default: config.yaml)
 - `--upload-all-weeks` - Upload all historical week videos to R2 (not just current week)
+- `--build-full` - Build the full timelapse video (can be slow and large)
 - `--help` - Show help message
 
 ### Examples
@@ -50,12 +51,17 @@ Upload all historical week videos:
 uv run python timelapse.py --upload-all-weeks
 ```
 
+Build full timelapse (on demand):
+```bash
+uv run python timelapse.py --build-full
+```
+
 ## What it does
 
 1. Scans the Google Drive folder for daily image folders
 2. Creates individual daily videos (only for new days)
 3. Combines daily videos into:
-   - Full timelapse (beginning to current)
+   - Full timelapse (beginning to current) - only when using `--build-full`
    - Current week video (Monday to today)
 4. Uploads to R2:
    - `timelapse/full.mp4` - Complete timelapse
