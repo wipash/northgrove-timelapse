@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // Replace this with your actual R2 bucket URL
-const R2_BASE_URL = "https://pub-3d42dd7f5c694d0090f90311a7a7fcc1.r2.dev/timelapse"
+const R2_BASE_URL = "https://nthgrv.mcgrath.nz/timelapse"
 
 interface WeeklyVideo {
   filename: string
