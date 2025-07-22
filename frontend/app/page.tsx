@@ -70,31 +70,31 @@ function EventsTimeline({ events, router }: { events: Event[], router: any }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MapPin className="h-5 w-5" />
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <MapPin className="h-4 w-4" />
           Construction Milestones
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-6">
-        <div className="space-y-4">
+      <CardContent className="p-4">
+        <div className="space-y-2">
           {sortedEvents.map((event, index) => (
             <div
               key={index}
-              className="flex items-start gap-4 p-4 rounded-lg border hover:bg-slate-50 cursor-pointer transition-colors"
+              className="flex items-center gap-3 p-2 rounded hover:bg-slate-50 cursor-pointer transition-colors"
               onClick={() => navigateToEventWeek(event.monday_date)}
             >
-              <div className="flex-shrink-0 w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
-              <div className="flex-grow">
-                <h3 className="font-semibold text-slate-900 mb-1">{event.title}</h3>
-                <p className="text-sm text-slate-600 mb-2">{formatEventDate(event.date)}</p>
+              <div className="flex-shrink-0 w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
+              <div className="flex-grow min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-slate-900 truncate">{event.title}</h3>
+                  <span className="text-xs text-slate-500 flex-shrink-0">{formatEventDate(event.date)}</span>
+                </div>
                 {event.description && (
-                  <p className="text-sm text-slate-700">{event.description}</p>
+                  <p className="text-xs text-slate-600 truncate">{event.description}</p>
                 )}
               </div>
-              <Button variant="ghost" size="sm" className="flex-shrink-0">
-                <Calendar className="h-4 w-4" />
-              </Button>
+              <Calendar className="h-3 w-3 text-slate-400 flex-shrink-0" />
             </div>
           ))}
         </div>
