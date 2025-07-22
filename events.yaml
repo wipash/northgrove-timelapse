@@ -1,0 +1,38 @@
+# Interesting events in the Northgrove house building project
+# Each event should have:
+# - title: Short title for the event
+# - date: Date of the event (YYYY-MM-DD format)
+# - description: Optional longer description
+
+events:
+  - title: "Piles Drilled"
+    date: 2025-02-26
+    description: "A digger with an auger drilled holes for the piles"
+
+  - title: "Piles Installed"
+    date: 2025-03-03
+    description: "All the piles were put into their holes"
+
+  - title: "Bearers Installed"
+    date: 2025-03-12
+    description: "Bearers were installed"
+
+  - title: "Floor Joists Installed"
+    date: 2025-03-19
+    description: "Floor joists were installed"
+
+  - title: "Floor Boards Laid"
+    date: 2025-04-08
+    description: "The interlocking plywood floor boards were laid."
+
+  - title: "Portal Frames Erected"
+    date: 2025-05-05
+    description: "Portal frames were installed, finally making the house three-dimensional"
+
+  - title: "Roof Installation"
+    date: 2025-06-06
+    description: "The roof was put on!"
+
+  - title: "Sliding Door Frames"
+    date: 2025-07-17
+    description: "Big sliding door frames were installed"
