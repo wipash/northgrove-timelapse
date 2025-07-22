@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, ChevronRight, Calendar, Clock, Home, ImageIcon, MapPin } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -48,7 +48,9 @@ interface Metadata {
 
 type ViewMode = "day" | "week" | "full"
 
-function EventsTimeline({ events, router }: { events: Event[], router: any }) {
+function EventsTimeline({ events }: { events: Event[] }) {
+  const router = useRouter()
+  
   if (!events || events.length === 0) {
     return null
   }
@@ -103,7 +105,7 @@ function EventsTimeline({ events, router }: { events: Event[], router: any }) {
   )
 }
 
-export default function TimelapseViewer() {
+function TimelapseViewer() {
   const router = useRouter()
   const searchParams = useSearchParams()
   
@@ -424,9 +426,28 @@ export default function TimelapseViewer() {
 
         {/* Events Timeline */}
         {metadata?.events && (
-          <EventsTimeline events={metadata.events} router={router} />
+          <EventsTimeline events={metadata.events} />
         )}
       </div>
     </div>
+  )
+}
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-600 mx-auto mb-4"></div>
+        <p className="text-slate-600">Loading timelapse data...</p>
+      </div>
+    </div>
+  )
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <TimelapseViewer />
+    </Suspense>
   )
 }
