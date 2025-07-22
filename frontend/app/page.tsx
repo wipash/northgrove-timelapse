@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, ChevronRight, Calendar, Clock, Home, ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -40,14 +41,22 @@ interface Metadata {
 type ViewMode = "day" | "week" | "full"
 
 export default function TimelapseViewer() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  
   const [metadata, setMetadata] = useState<Metadata | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>("week")
-  const [selectedWeek, setSelectedWeek] = useState<string>("")
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>("")
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const videoRef = useRef<HTMLVideoElement>(null)
+  
+  // Get view mode and selected week from URL params
+  const viewParam = searchParams.get("view") as ViewMode | null
+  const dateParam = searchParams.get("date")
+  
+  const viewMode: ViewMode = viewParam || "week"
+  const selectedWeek = dateParam || ""
 
   useEffect(() => {
     fetchMetadata()
@@ -90,7 +99,12 @@ export default function TimelapseViewer() {
       const data = await response.json()
 
       setMetadata(data)
-      setSelectedWeek(data.current_week.monday_date)
+      
+      // If viewing week mode without a specific date, redirect to current week
+      if (viewMode === "week" && !dateParam) {
+        router.push(`/?view=week&date=${data.current_week.monday_date}`)
+      }
+      
       setError("")
     } catch (err) {
       let errorMessage = "Failed to load timelapse data. "
@@ -116,10 +130,11 @@ export default function TimelapseViewer() {
         url = `${R2_BASE_URL}/day.mp4`
         break
       case "week":
-        if (selectedWeek === metadata.current_week.monday_date) {
+        const weekDate = selectedWeek || metadata.current_week.monday_date
+        if (weekDate === metadata.current_week.monday_date) {
           url = `${R2_BASE_URL}/week.mp4`
         } else {
-          url = `${R2_BASE_URL}/weeks/timelapse_week_${selectedWeek}.mp4`
+          url = `${R2_BASE_URL}/weeks/timelapse_week_${weekDate}.mp4`
         }
         break
       case "full":
@@ -131,9 +146,10 @@ export default function TimelapseViewer() {
 
   const getSelectedWeekData = () => {
     if (!metadata) return null
+    const weekDate = selectedWeek || metadata.current_week.monday_date
     return (
-      metadata.weekly_videos.find((w) => w.monday_date === selectedWeek) ||
-      (selectedWeek === metadata.current_week.monday_date
+      metadata.weekly_videos.find((w) => w.monday_date === weekDate) ||
+      (weekDate === metadata.current_week.monday_date
         ? {
             filename: "week.mp4",
             monday_date: metadata.current_week.monday_date,
@@ -148,7 +164,8 @@ export default function TimelapseViewer() {
   const navigateWeek = (direction: "prev" | "next") => {
     if (!metadata) return
 
-    const currentIndex = metadata.weekly_videos.findIndex((w) => w.monday_date === selectedWeek)
+    const currentWeek = selectedWeek || metadata.current_week.monday_date
+    const currentIndex = metadata.weekly_videos.findIndex((w) => w.monday_date === currentWeek)
     let newIndex = currentIndex
 
     if (direction === "prev" && currentIndex > 0) {
@@ -158,7 +175,7 @@ export default function TimelapseViewer() {
     }
 
     if (newIndex !== currentIndex) {
-      setSelectedWeek(metadata.weekly_videos[newIndex].monday_date)
+      router.push(`/?view=week&date=${metadata.weekly_videos[newIndex].monday_date}`)
     }
   }
 
@@ -232,7 +249,7 @@ export default function TimelapseViewer() {
               <div className="flex gap-2">
                 <Button
                   variant={viewMode === "day" ? "default" : "outline"}
-                  onClick={() => setViewMode("day")}
+                  onClick={() => router.push("/?view=day")}
                   className="flex items-center gap-2"
                 >
                   <Clock className="h-4 w-4" />
@@ -240,7 +257,11 @@ export default function TimelapseViewer() {
                 </Button>
                 <Button
                   variant={viewMode === "week" ? "default" : "outline"}
-                  onClick={() => setViewMode("week")}
+                  onClick={() => {
+                    if (metadata) {
+                      router.push(`/?view=week&date=${selectedWeek || metadata.current_week.monday_date}`)
+                    }
+                  }}
                   className="flex items-center gap-2"
                 >
                   <Calendar className="h-4 w-4" />
@@ -248,7 +269,7 @@ export default function TimelapseViewer() {
                 </Button>
                 <Button
                   variant={viewMode === "full" ? "default" : "outline"}
-                  onClick={() => setViewMode("full")}
+                  onClick={() => router.push("/?view=full")}
                   className="flex items-center gap-2"
                 >
                   <Home className="h-4 w-4" />
@@ -279,12 +300,15 @@ export default function TimelapseViewer() {
                     variant="outline"
                     size="icon"
                     onClick={() => navigateWeek("prev")}
-                    disabled={metadata.weekly_videos.findIndex((w) => w.monday_date === selectedWeek) === 0}
+                    disabled={metadata.weekly_videos.findIndex((w) => w.monday_date === (selectedWeek || metadata.current_week.monday_date)) === 0}
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
 
-                  <Select value={selectedWeek} onValueChange={setSelectedWeek}>
+                  <Select 
+                    value={selectedWeek || metadata.current_week.monday_date} 
+                    onValueChange={(date) => router.push(`/?view=week&date=${date}`)}
+                  >
                     <SelectTrigger className="w-48">
                       <SelectValue />
                     </SelectTrigger>
@@ -302,7 +326,7 @@ export default function TimelapseViewer() {
                     size="icon"
                     onClick={() => navigateWeek("next")}
                     disabled={
-                      metadata.weekly_videos.findIndex((w) => w.monday_date === selectedWeek) ===
+                      metadata.weekly_videos.findIndex((w) => w.monday_date === (selectedWeek || metadata.current_week.monday_date)) ===
                       metadata.weekly_videos.length - 1
                     }
                   >

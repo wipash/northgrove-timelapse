@@ -36,6 +36,10 @@ This is a Next.js 15 application designed to display timelapse videos of the Nor
 1. **Video Viewer (`app/page.tsx`)**: The main component that:
    - Fetches metadata from Cloudflare R2 storage
    - Displays timelapse videos in three modes: daily, weekly, or full project
+   - Uses URL search params for navigation:
+     - `/?view=day` - Today's timelapse
+     - `/?view=week&date=YYYY-MM-DD` - Specific week (Monday date)
+     - `/?view=full` - Full project timelapse
    - Allows users to navigate between different weeks
    - Handles video playback and error states
 
