@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { ChevronLeft, ChevronRight, Calendar, Clock, Home, ImageIcon } from "lucide-react"
+import { ChevronLeft, ChevronRight, Calendar, Clock, Home, ImageIcon, MapPin } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // Replace this with your actual R2 bucket URL
@@ -16,6 +16,13 @@ interface WeeklyVideo {
   start: string
   end: string
   r2_path: string
+}
+
+interface Event {
+  title: string
+  date: string
+  monday_date: string
+  description?: string
 }
 
 interface Metadata {
@@ -36,9 +43,65 @@ interface Metadata {
     start: string
     end: string
   }
+  events?: Event[]
 }
 
 type ViewMode = "day" | "week" | "full"
+
+function EventsTimeline({ events, router }: { events: Event[], router: any }) {
+  if (!events || events.length === 0) {
+    return null
+  }
+
+  // Sort events in reverse chronological order (most recent first)
+  const sortedEvents = [...events].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+  const formatEventDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    })
+  }
+
+  const navigateToEventWeek = (mondayDate: string) => {
+    router.push(`/?view=week&date=${mondayDate}`)
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <MapPin className="h-5 w-5" />
+          Construction Milestones
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-6">
+        <div className="space-y-4">
+          {sortedEvents.map((event, index) => (
+            <div
+              key={index}
+              className="flex items-start gap-4 p-4 rounded-lg border hover:bg-slate-50 cursor-pointer transition-colors"
+              onClick={() => navigateToEventWeek(event.monday_date)}
+            >
+              <div className="flex-shrink-0 w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
+              <div className="flex-grow">
+                <h3 className="font-semibold text-slate-900 mb-1">{event.title}</h3>
+                <p className="text-sm text-slate-600 mb-2">{formatEventDate(event.date)}</p>
+                {event.description && (
+                  <p className="text-sm text-slate-700">{event.description}</p>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" className="flex-shrink-0">
+                <Calendar className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 export default function TimelapseViewer() {
   const router = useRouter()
@@ -124,21 +187,22 @@ export default function TimelapseViewer() {
   const updateVideoUrl = () => {
     if (!metadata) return
 
+    const timestamp = Date.now()
     let url = ""
     switch (viewMode) {
       case "day":
-        url = `${R2_BASE_URL}/day.mp4`
+        url = `${R2_BASE_URL}/day.mp4?t=${timestamp}`
         break
       case "week":
         const weekDate = selectedWeek || metadata.current_week.monday_date
         if (weekDate === metadata.current_week.monday_date) {
-          url = `${R2_BASE_URL}/week.mp4`
+          url = `${R2_BASE_URL}/week.mp4?t=${timestamp}`
         } else {
-          url = `${R2_BASE_URL}/weeks/timelapse_week_${weekDate}.mp4`
+          url = `${R2_BASE_URL}/weeks/timelapse_week_${weekDate}.mp4?t=${timestamp}`
         }
         break
       case "full":
-        url = `${R2_BASE_URL}/full.mp4`
+        url = `${R2_BASE_URL}/full.mp4?t=${timestamp}`
         break
     }
     setCurrentVideoUrl(url)
@@ -357,6 +421,11 @@ export default function TimelapseViewer() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Events Timeline */}
+        {metadata?.events && (
+          <EventsTimeline events={metadata.events} router={router} />
+        )}
       </div>
     </div>
   )
