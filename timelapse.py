@@ -6,7 +6,6 @@ Processes daily image folders, creates videos, and uploads to R2.
 
 import os
 import json
-import yaml
 import boto3
 import subprocess
 import argparse
@@ -15,14 +14,13 @@ from pathlib import Path
 from tqdm import tqdm
 import tempfile
 import shutil
+import gdrive
 
 
 class TimelapseProcessor:
-    def __init__(self, config_path="config.yaml", upload_enabled=True):
-        with open(config_path, "r") as f:
-            self.config = yaml.safe_load(f)
-
-        self.state_file = Path("state.json")
+    def __init__(self, upload_enabled=True):
+        self.config = self._load_config_from_env()
+        self.state_file = Path("state.json") # This will be managed in R2
         self.state = self.load_state()
         self.upload_enabled = upload_enabled
 
@@ -30,7 +28,7 @@ class TimelapseProcessor:
         Path(self.config["output"]["videos_dir"]).mkdir(exist_ok=True)
         Path(self.config["output"]["daily_dir"]).mkdir(exist_ok=True)
 
-        # Initialize R2 client (S3 compatible) only if uploads are enabled
+        # Initialize R2 client
         if self.upload_enabled:
             self.s3_client = boto3.client(
                 "s3",
@@ -41,66 +39,129 @@ class TimelapseProcessor:
         else:
             self.s3_client = None
 
+        # Initialize Google Drive Service
+        self.drive_service = gdrive.get_drive_service()
+
+    def _load_config_from_env(self):
+        """Loads configuration from environment variables."""
+        config = {
+            "source": {
+                "path": os.environ.get("GDRIVE_FOLDER_ID"),
+                "folder_pattern": os.environ.get("FOLDER_PATTERN_PREFIX", "TLST04A00879_"),
+            },
+            "output": {
+                "videos_dir": "./videos",
+                "daily_dir": "./videos/daily",
+            },
+            "r2": {
+                "endpoint_url": os.environ.get("R2_ENDPOINT_URL"),
+                "access_key_id": os.environ.get("R2_ACCESS_KEY_ID"),
+                "secret_access_key": os.environ.get("R2_SECRET_ACCESS_KEY"),
+                "bucket_name": os.environ.get("R2_BUCKET_NAME"),
+            },
+            "video": {
+                "fps": int(os.environ.get("VIDEO_FPS", 30)),
+                "codec": os.environ.get("VIDEO_CODEC", "libx264"),
+                "preset": os.environ.get("VIDEO_PRESET", "slow"),
+                "crf": int(os.environ.get("VIDEO_CRF", 28)),
+                "max_width": int(os.environ.get("VIDEO_MAX_WIDTH", 1920)),
+                "full_video": {
+                    "crf": int(os.environ.get("FULL_VIDEO_CRF", 32)),
+                    "max_width": int(os.environ.get("FULL_VIDEO_MAX_WIDTH", 1280)),
+                    "fps": int(os.environ.get("FULL_VIDEO_FPS", 20)),
+                },
+            },
+        }
+        if not all([
+            config["source"]["path"],
+            config["r2"]["endpoint_url"],
+            config["r2"]["access_key_id"],
+            config["r2"]["secret_access_key"],
+            config["r2"]["bucket_name"],
+        ]):
+            raise ValueError("One or more required environment variables are not set.")
+        return config
+
     def load_state(self):
-        """Load processing state from file."""
-        if self.state_file.exists():
-            with open(self.state_file, "r") as f:
-                return json.load(f)
-        return {"last_processed_date": None, "processed_folders": []}
+        """Load processing state from R2."""
+        state_key = "state/state.json"
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.config["r2"]["bucket_name"], Key=state_key
+            )
+            state_data = response["Body"].read().decode("utf-8")
+            return json.loads(state_data)
+        except self.s3_client.exceptions.NoSuchKey:
+            print("No state file found on R2, starting fresh.")
+            return {"last_processed_date": None, "processed_folders": []}
+        except Exception as e:
+            print(f"Error loading state from R2: {e}")
+            # Fallback to a default empty state
+            return {"last_processed_date": None, "processed_folders": []}
 
     def save_state(self):
-        """Save processing state to file."""
-        with open(self.state_file, "w") as f:
-            json.dump(self.state, f, indent=2)
+        """Save processing state to R2."""
+        state_key = "state/state.json"
+        try:
+            self.s3_client.put_object(
+                Bucket=self.config["r2"]["bucket_name"],
+                Key=state_key,
+                Body=json.dumps(self.state, indent=2),
+                ContentType="application/json",
+            )
+        except Exception as e:
+            print(f"Error saving state to R2: {e}")
 
     def get_daily_folders(self):
-        """Get all daily folders sorted by date."""
-        source_path = Path(self.config["source"]["path"])
+        """Get all daily folders from Google Drive, sorted by date."""
+        gdrive_folders = gdrive.get_folders(self.drive_service, self.config["source"]["path"])
         folders = []
 
-        for item in source_path.iterdir():
-            if item.is_dir() and item.name.startswith(
-                self.config["source"]["folder_pattern"]
-            ):
-                # Extract date from folder name (TLST04A00879_YYMMDDHHMMSS)
-                date_str = item.name.split("_")[1][:6]  # YYMMDD
-                folders.append({"path": item, "name": item.name, "date": date_str})
+        for item in gdrive_folders:
+            if item['name'].startswith(self.config["source"]["folder_pattern"]):
+                date_str = item['name'].split("_")[1][:6]
+                folders.append({"id": item['id'], "name": item['name'], "date": date_str})
 
-        # Sort by date
         folders.sort(key=lambda x: x["date"])
         return folders
 
-    def get_images_from_folder(self, folder_path):
-        """Get all jpg images from a folder, sorted by name."""
-        images = []
-        for file in folder_path.iterdir():
-            if file.suffix.lower() == ".jpg" and file.name.startswith("TLS_"):
-                images.append(file)
+    def get_images_from_folder(self, folder_id, temp_dir):
+        """
+        Lists and downloads images from a GDrive folder into a temporary directory.
+        Returns a list of local paths to the downloaded images.
+        """
+        query = f"'{folder_id}' in parents and mimeType = 'image/jpeg' and name starts with 'TLS_'"
+        results = self.drive_service.files().list(q=query, pageSize=1000, fields="files(id, name)").execute()
+        files = results.get('files', [])
 
-        # Sort by filename number (handle malformed filenames gracefully)
+        downloaded_images = []
+        for item in tqdm(files, desc=f"Downloading images for folder {folder_id}", leave=False):
+            file_path = Path(temp_dir) / item['name']
+            gdrive.download_file(self.drive_service, item['id'], file_path)
+            downloaded_images.append(file_path)
+
         def safe_sort_key(x):
             try:
-                # Extract the number part, handling cases like "000000072 (2)"
                 parts = x.stem.split("_")
                 if len(parts) >= 2:
-                    # Remove any non-numeric characters from the number
                     number_str = "".join(c for c in parts[1].split()[0] if c.isdigit())
                     return int(number_str) if number_str else 0
                 return 0
             except:
                 return 0
 
-        images.sort(key=safe_sort_key)
-        return images
+        downloaded_images.sort(key=safe_sort_key)
+        return downloaded_images
 
     def create_daily_video(self, folder_info, is_today=False):
         """Create a video from a single day's images."""
         print(f"Processing {folder_info['name']}...")
 
-        images = self.get_images_from_folder(folder_info["path"])
-        if not images:
-            print(f"  No images found in {folder_info['name']}")
-            return None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            images = self.get_images_from_folder(folder_info['id'], temp_dir)
+            if not images:
+                print(f"  No images found in {folder_info['name']}")
+                return None
 
         # Output path for daily video
         output_path = (
@@ -269,15 +330,28 @@ class TimelapseProcessor:
     def get_latest_image(self, folders):
         """Get the most recent image from the latest folder."""
         if not folders:
-            return None
+            return None, None
 
         # Start from the most recent folder and work backwards
         for folder_info in reversed(folders):
-            images = self.get_images_from_folder(folder_info["path"])
-            if images:
-                return images[-1]  # Last image of the day
+            query = f"'{folder_info['id']}' in parents and mimeType = 'image/jpeg' and name starts with 'TLS_'"
+            results = self.drive_service.files().list(q=query, pageSize=1, orderBy="name desc", fields="files(id, name)").execute()
+            files = results.get('files', [])
 
-        return None
+            if files:
+                latest_file = files[0]
+                image_id = latest_file['id']
+
+                request = self.drive_service.files().get_media(fileId=image_id)
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while done is False:
+                    status, done = downloader.next_chunk()
+
+                return fh.getvalue(), latest_file['name']
+
+        return None, None
 
     def get_all_weeks(self, all_videos):
         """Get all videos grouped by week (Monday to Sunday)."""
@@ -363,7 +437,7 @@ class TimelapseProcessor:
             print(f"Warning: Failed to load events.yaml: {e}")
             return []
 
-    def generate_metadata(self, all_daily_videos, week_video, latest_image):
+    def generate_metadata(self, all_daily_videos, week_video, latest_image_filename):
         """Generate metadata JSON for web frontend."""
         metadata = {
             "last_updated": datetime.now().isoformat(),
@@ -396,21 +470,13 @@ class TimelapseProcessor:
                 metadata["date_range"]["end"] = dates[-1].isoformat()
                 metadata["latest_day"] = dates[-1].isoformat()
 
-        if latest_image:
-            # Get the parent folder name for the latest image
-            folder_name = latest_image.parent.name
-            date_str = folder_name.split("_")[1][:6]  # YYMMDD
-            try:
-                year = 2000 + int(date_str[:2])
-                month = int(date_str[2:4])
-                day = int(date_str[4:6])
-                date = datetime(year, month, day)
+        if latest_image_filename:
+            # The filename itself doesn't have date info, so we use the latest day from videos
+            if metadata["latest_day"]:
                 metadata["latest_image"] = {
-                    "date": date.isoformat(),
-                    "filename": latest_image.name,
+                    "date": metadata["latest_day"],
+                    "filename": latest_image_filename,
                 }
-            except:
-                pass
 
         if week_video:
             # Parse week start date from filename
@@ -568,13 +634,14 @@ class TimelapseProcessor:
 
         # Get latest image from ALL folders (not just processed ones)
         all_folders = self.get_daily_folders()
-        latest_image = self.get_latest_image(all_folders)
+        latest_image_data, latest_image_filename = self.get_latest_image(all_folders)
 
-        # Copy latest image to videos directory for easy upload
-        if latest_image:
+        latest_dest = None
+        if latest_image_data:
             latest_dest = Path(self.config["output"]["videos_dir"]) / "latest.jpg"
-            shutil.copy2(latest_image, latest_dest)
-            print(f"Copied latest image: {latest_image.name}")
+            with open(latest_dest, "wb") as f:
+                f.write(latest_image_data)
+            print(f"Saved latest image: {latest_image_filename}")
 
         # Upload to R2
         print("\nUploading to R2...")
@@ -589,7 +656,7 @@ class TimelapseProcessor:
             self.upload_to_r2(week_video, week_key)
             self.upload_to_r2(week_video, "timelapse/week.mp4")
 
-        if latest_image:
+        if latest_dest and latest_dest.exists():
             self.upload_to_r2(latest_dest, "timelapse/latest.jpg")
 
         # Upload the latest day's video
@@ -606,7 +673,7 @@ class TimelapseProcessor:
 
         # Generate and upload metadata for web frontend
         print("\nGenerating metadata...")
-        metadata = self.generate_metadata(all_daily_videos, week_video, latest_image)
+        metadata = self.generate_metadata(all_daily_videos, week_video, latest_image_filename)
 
         # Save metadata locally and upload
         metadata_path = Path(self.config["output"]["videos_dir"]) / "metadata.json"
@@ -618,7 +685,7 @@ class TimelapseProcessor:
         print("\nProcessing complete!")
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Process timelapse images and create videos"
     )
@@ -627,11 +694,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--days", type=int, metavar="N", help="Process only the last N days"
-    )
-    parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to config file (default: config.yaml)",
     )
     parser.add_argument(
         "--upload-all-weeks",
@@ -647,9 +709,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Create processor with upload setting
-    processor = TimelapseProcessor(
-        config_path=args.config, upload_enabled=not args.no_upload
-    )
+    processor = TimelapseProcessor(upload_enabled=not args.no_upload)
 
     # Process with optional days limit and upload settings
     processor.process(
@@ -657,3 +717,6 @@ if __name__ == "__main__":
         upload_all_weeks=args.upload_all_weeks,
         build_full=args.build_full,
     )
+
+if __name__ == "__main__":
+    main()
