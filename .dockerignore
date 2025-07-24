@@ -7,3 +7,11 @@ videos
 __pycache__
 *.pyc
 test*
+.git
+.env
+.github
+.dockerignore
+.gitignore
+*.md
+Dockerfile
+config-example.yaml
