@@ -80,7 +80,7 @@ class TimelapseProcessor:
                 },
             },
             "download": {
-                "parallel_workers": int(os.environ.get("DOWNLOAD_WORKERS", 5)),  # Reduced default
+                "parallel_workers": int(os.environ.get("DOWNLOAD_WORKERS", 10)),
             },
         }
         if not all([
@@ -151,8 +151,8 @@ class TimelapseProcessor:
         # Use parallel downloads for speed
         print(f"  Downloading {len(files)} images in parallel...")
         downloaded_images = gdrive.download_files_parallel(
-            self.drive_service, 
-            files, 
+            self.drive_service,
+            files,
             temp_dir,
             max_workers=self.config["download"]["parallel_workers"]
         )
@@ -310,7 +310,7 @@ class TimelapseProcessor:
                     print(f"  Warning: {video_path.name} not found locally or in cache")
             else:
                 available_videos.append(video_path)
-        
+
         if not available_videos:
             print("  No videos available for combining")
             return None
@@ -619,7 +619,7 @@ class TimelapseProcessor:
         """Check if a file exists in R2."""
         if not self.upload_enabled:
             return False
-        
+
         try:
             self.s3_client.head_object(
                 Bucket=self.config["r2"]["bucket_name"],
@@ -636,7 +636,7 @@ class TimelapseProcessor:
         """Download a file from R2 to local path."""
         if not self.upload_enabled:
             return False
-        
+
         try:
             self.s3_client.download_file(
                 self.config["r2"]["bucket_name"],
@@ -652,7 +652,7 @@ class TimelapseProcessor:
         """Delete a file from R2."""
         if not self.upload_enabled:
             return False
-        
+
         try:
             self.s3_client.delete_object(
                 Bucket=self.config["r2"]["bucket_name"],
@@ -667,16 +667,16 @@ class TimelapseProcessor:
         """List all keys in R2 with given prefix."""
         if not self.upload_enabled:
             return []
-        
+
         try:
             response = self.s3_client.list_objects_v2(
                 Bucket=self.config["r2"]["bucket_name"],
                 Prefix=prefix
             )
-            
+
             if 'Contents' not in response:
                 return []
-                
+
             return [obj['Key'] for obj in response['Contents']]
         except Exception as e:
             print(f"Error listing R2 keys with prefix {prefix}: {e}")
@@ -686,20 +686,20 @@ class TimelapseProcessor:
         """Get list of all daily videos, checking both local and R2."""
         daily_videos_dir = Path(self.config["output"]["daily_dir"])
         daily_videos_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Get local videos
         local_videos = {v.name: v for v in daily_videos_dir.glob("*.mp4")}
-        
+
         # Get R2 cached videos
         r2_daily_keys = self.list_r2_keys("cache/daily/")
         r2_video_names = {k.split('/')[-1]: k for k in r2_daily_keys if k.endswith('.mp4')}
-        
+
         # Combine both sources, preferring local if exists
         all_video_names = set(local_videos.keys()) | set(r2_video_names.keys())
-        
+
         # Sort by name (which includes date)
         sorted_names = sorted(all_video_names)
-        
+
         # Return paths (local if exists, otherwise will be downloaded when needed)
         video_paths = []
         for name in sorted_names:
@@ -708,24 +708,24 @@ class TimelapseProcessor:
             else:
                 # Return path where it would be if downloaded
                 video_paths.append(daily_videos_dir / name)
-        
+
         return video_paths
 
     def cleanup_old_daily_videos(self, current_week_monday):
         """Remove daily videos from R2 cache for weeks that have been compiled."""
         if not self.upload_enabled or not current_week_monday:
             return
-        
+
         print("\nCleaning up old daily videos from R2 cache...")
         deleted_count = 0
-        
+
         # List all daily videos in R2 cache
         r2_daily_keys = self.list_r2_keys("cache/daily/")
-        
+
         for r2_key in r2_daily_keys:
             if not r2_key.endswith('.mp4'):
                 continue
-                
+
             # Parse date from video filename
             video_name = r2_key.split('/')[-1].replace('.mp4', '')
             date_str = video_name.split("_")[1][:6]  # YYMMDD
@@ -734,30 +734,30 @@ class TimelapseProcessor:
                 month = int(date_str[2:4])
                 day = int(date_str[4:6])
                 video_date = datetime(year, month, day)
-                
+
                 # Get the Monday of this video's week
                 days_since_monday = video_date.weekday()
                 video_monday = video_date - timedelta(days=days_since_monday)
-                
+
                 # If this video is from a past week (not current week)
                 if video_monday < current_week_monday:
                     # Check if weekly video exists before deleting daily
                     week_monday_str = video_monday.strftime("%y%m%d")
                     week_r2_key = f"timelapse/weeks/timelapse_week_{week_monday_str}.mp4"
-                    
+
                     if self.check_r2_exists(week_r2_key):
                         # Weekly video exists, safe to delete daily
                         if self.delete_from_r2(r2_key):
                             deleted_count += 1
                             if deleted_count <= 5:  # Show first few deletions
                                 print(f"  Deleted {video_name}.mp4 (week {week_monday_str} compiled)")
-                    
+
             except Exception as e:
                 print(f"  Warning: Could not process {video_name}: {e}")
-        
+
         if deleted_count > 5:
             print(f"  ... and {deleted_count - 5} more daily videos")
-        
+
         print(f"  Total daily videos cleaned up: {deleted_count}")
 
     def process(self, days_limit=None, upload_all_weeks=False, build_full=False):
@@ -766,15 +766,15 @@ class TimelapseProcessor:
 
         # Get all daily folders
         all_folders = self.get_daily_folders()
-        
+
         # Determine which folder is "today" from ALL folders (not limited set)
         latest_folder_name = all_folders[-1]["name"] if all_folders else None
-        
+
         # For efficiency, limit processing to recent days, but ensure current week is complete
         if days_limit:
             # Start with the requested limit
             folders_to_process = all_folders[-days_limit:]
-            
+
             # But also ensure we have all days needed for current week compilation
             if all_folders:
                 # Get current week date range
@@ -784,11 +784,11 @@ class TimelapseProcessor:
                     month = int(latest_date_str[2:4])
                     day = int(latest_date_str[4:6])
                     latest_date = datetime(year, month, day)
-                    
+
                     # Find Monday of current week
                     days_since_monday = latest_date.weekday()
                     current_week_monday = latest_date - timedelta(days=days_since_monday)
-                    
+
                     # Ensure we process all days from current week Monday onwards
                     current_week_folders = []
                     for folder in all_folders:
@@ -798,25 +798,25 @@ class TimelapseProcessor:
                             folder_month = int(folder_date_str[2:4])
                             folder_day = int(folder_date_str[4:6])
                             folder_date = datetime(folder_year, folder_month, folder_day)
-                            
+
                             if folder_date >= current_week_monday:
                                 current_week_folders.append(folder)
                         except:
                             continue
-                    
+
                     # Combine recent days + current week days (removes duplicates)
                     folder_names_to_process = set(f["name"] for f in folders_to_process)
                     folder_names_to_process.update(f["name"] for f in current_week_folders)
-                    
+
                     # Rebuild folders list maintaining order
                     folders = [f for f in all_folders if f["name"] in folder_names_to_process]
-                    
+
                 except:
                     # Fallback to original behavior if date parsing fails
                     folders = folders_to_process
             else:
                 folders = folders_to_process
-                
+
             print(f"Processing {len(folders)} folders (including current week completion)")
         else:
             folders = all_folders
