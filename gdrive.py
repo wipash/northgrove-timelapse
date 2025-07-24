@@ -1,23 +1,55 @@
 import os
 import json
+import base64
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
+from pathlib import Path
 
 def get_drive_service():
-    """Authenticates with Google Drive and returns a service object."""
+    """Authenticates with Google Drive and returns a service object.
+    
+    Authentication methods (in order of preference):
+    1. Local auth.json file (for local development)
+    2. GDRIVE_SA_KEY environment variable (base64-encoded JSON)
+    3. GDRIVE_SA_KEY environment variable (plain JSON)
+    """
+    # Method 1: Try local auth.json file first
+    auth_file = Path("auth.json")
+    if auth_file.exists():
+        try:
+            with open(auth_file, 'r') as f:
+                creds_json = json.load(f)
+            creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/drive.readonly'])
+            service = build('drive', 'v3', credentials=creds)
+            print("Using Google Drive credentials from auth.json")
+            return service
+        except Exception as e:
+            print(f"Warning: Failed to load auth.json: {e}")
+    
+    # Method 2 & 3: Try environment variable
     gdrive_sa_key = os.environ.get("GDRIVE_SA_KEY")
     if not gdrive_sa_key:
-        raise ValueError("GDRIVE_SA_KEY environment variable not set.")
-
+        raise ValueError("No Google Drive credentials found. Please create auth.json or set GDRIVE_SA_KEY environment variable.")
+    
+    # Try to decode as base64 first
     try:
-        creds_json = json.loads(gdrive_sa_key)
+        decoded_key = base64.b64decode(gdrive_sa_key)
+        creds_json = json.loads(decoded_key)
+        print("Using Google Drive credentials from base64-encoded GDRIVE_SA_KEY")
+    except:
+        # If base64 decode fails, try as plain JSON
+        try:
+            creds_json = json.loads(gdrive_sa_key)
+            print("Using Google Drive credentials from plain JSON GDRIVE_SA_KEY")
+        except json.JSONDecodeError:
+            raise ValueError("Failed to parse GDRIVE_SA_KEY. It's not valid JSON or base64-encoded JSON.")
+    
+    try:
         creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/drive.readonly'])
         service = build('drive', 'v3', credentials=creds)
         return service
-    except json.JSONDecodeError:
-        raise ValueError("Failed to parse GDRIVE_SA_KEY. It's not valid JSON.")
     except Exception as e:
         raise RuntimeError(f"Failed to create Google Drive service: {e}")
 
