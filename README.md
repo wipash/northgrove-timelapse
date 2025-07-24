@@ -35,7 +35,13 @@ To run the container, you must provide the necessary configuration as environmen
 ```
 # .env file
 GDRIVE_FOLDER_ID="your_google_drive_folder_id"
-GDRIVE_SA_KEY='{"type": "service_account", "project_id": "...", ...}'
+# For GDRIVE_SA_KEY, you can use either:
+# Option 1: Base64-encoded (recommended for deployment)
+# GDRIVE_SA_KEY="base64_encoded_json_here"
+# To encode: base64 -w0 < your-service-account-key.json
+# Option 2: Plain JSON (be careful with quotes)
+# GDRIVE_SA_KEY='{"type": "service_account", "project_id": "...", ...}'
+GDRIVE_SA_KEY="your_base64_encoded_or_plain_json_key"
 R2_ENDPOINT_URL="https://<account-id>.r2.cloudflarestorage.com"
 R2_ACCESS_KEY_ID="your_r2_access_key"
 R2_SECRET_ACCESS_KEY="your_r2_secret"
@@ -84,8 +90,29 @@ For tasks like building the full timelapse, you can run the script locally.
     ```bash
     uv sync
     ```
-2.  **Set Environment Variables:**
-    Instead of using a `.env` file, you can `export` the environment variables in your shell before running the script.
+
+2.  **Configure Google Drive Authentication:**
+    
+    For local development, you have two options:
+    
+    **Option A: Use auth.json file (Recommended for local development)**
+    - Place your Google service account JSON key in a file named `auth.json` in the project root
+    - The script will automatically detect and use this file
+    
+    **Option B: Use environment variable**
+    - Set the `GDRIVE_SA_KEY` environment variable with either:
+      - Plain JSON: `export GDRIVE_SA_KEY='{"type": "service_account", ...}'`
+      - Base64-encoded JSON: `export GDRIVE_SA_KEY=$(base64 < your-key.json)`
+
+3.  **Set Other Environment Variables:**
+    Export the required environment variables in your shell:
+    ```bash
+    export GDRIVE_FOLDER_ID="your_google_drive_folder_id"
+    export R2_ENDPOINT_URL="https://<account-id>.r2.cloudflarestorage.com"
+    export R2_ACCESS_KEY_ID="your_r2_access_key"
+    export R2_SECRET_ACCESS_KEY="your_r2_secret"
+    export R2_BUCKET_NAME="your_r2_bucket_name"
+    ```
 
 ### Usage
 
