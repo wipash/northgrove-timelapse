@@ -648,6 +648,65 @@ class TimelapseProcessor:
             print(f"Error downloading {key} from R2: {e}")
             return False
 
+    def delete_from_r2(self, key):
+        """Delete a file from R2."""
+        if not self.upload_enabled:
+            return False
+        
+        try:
+            self.s3_client.delete_object(
+                Bucket=self.config["r2"]["bucket_name"],
+                Key=key
+            )
+            return True
+        except Exception as e:
+            print(f"Error deleting {key} from R2: {e}")
+            return False
+
+    def cleanup_old_daily_videos(self, all_daily_videos, current_week_monday):
+        """Remove daily videos from R2 cache for weeks that have been compiled."""
+        if not self.upload_enabled:
+            return
+        
+        print("\nCleaning up old daily videos from R2 cache...")
+        deleted_count = 0
+        
+        for video_path in all_daily_videos:
+            # Parse date from video filename
+            video_name = video_path.stem
+            date_str = video_name.split("_")[1][:6]  # YYMMDD
+            try:
+                year = 2000 + int(date_str[:2])
+                month = int(date_str[2:4])
+                day = int(date_str[4:6])
+                video_date = datetime(year, month, day)
+                
+                # Get the Monday of this video's week
+                days_since_monday = video_date.weekday()
+                video_monday = video_date - timedelta(days=days_since_monday)
+                
+                # If this video is from a past week (not current week)
+                if video_monday < current_week_monday:
+                    r2_cache_key = f"cache/daily/{video_name}.mp4"
+                    # Check if weekly video exists before deleting daily
+                    week_monday_str = video_monday.strftime("%y%m%d")
+                    week_r2_key = f"timelapse/weeks/timelapse_week_{week_monday_str}.mp4"
+                    
+                    if self.check_r2_exists(week_r2_key):
+                        # Weekly video exists, safe to delete daily
+                        if self.delete_from_r2(r2_cache_key):
+                            deleted_count += 1
+                            if deleted_count <= 5:  # Show first few deletions
+                                print(f"  Deleted {video_name}.mp4 (week {week_monday_str} compiled)")
+                    
+            except Exception as e:
+                print(f"  Warning: Could not process {video_name}: {e}")
+        
+        if deleted_count > 5:
+            print(f"  ... and {deleted_count - 5} more daily videos")
+        
+        print(f"  Total daily videos cleaned up: {deleted_count}")
+
     def process(self, days_limit=None, upload_all_weeks=False, build_full=False):
         """Main processing function."""
         print("Starting timelapse processing...")
@@ -788,6 +847,10 @@ class TimelapseProcessor:
             json.dump(metadata, f, indent=2)
 
         self.upload_to_r2(metadata_path, "timelapse/metadata.json")
+
+        # Clean up old daily videos from R2 cache (only if we have a current week)
+        if current_week_monday and self.upload_enabled:
+            self.cleanup_old_daily_videos(all_daily_videos, current_week_monday)
 
         print("\nProcessing complete!")
 
