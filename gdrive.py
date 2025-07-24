@@ -25,7 +25,9 @@ def get_drive_service():
                 creds_json = json.load(f)
             creds = Credentials.from_service_account_info(creds_json, scopes=['https://www.googleapis.com/auth/drive.readonly'])
             service = build('drive', 'v3', credentials=creds)
-            print("Using Google Drive credentials from auth.json")
+            if not hasattr(get_drive_service, '_logged'):
+                print("Using Google Drive credentials from auth.json")
+                get_drive_service._logged = True
             return service
         except Exception as e:
             print(f"Warning: Failed to load auth.json: {e}")
@@ -39,12 +41,16 @@ def get_drive_service():
     try:
         decoded_key = base64.b64decode(gdrive_sa_key)
         creds_json = json.loads(decoded_key)
-        print("Using Google Drive credentials from base64-encoded GDRIVE_SA_KEY")
+        if not hasattr(get_drive_service, '_logged'):
+            print("Using Google Drive credentials from base64-encoded GDRIVE_SA_KEY")
+            get_drive_service._logged = True
     except:
         # If base64 decode fails, try as plain JSON
         try:
             creds_json = json.loads(gdrive_sa_key)
-            print("Using Google Drive credentials from plain JSON GDRIVE_SA_KEY")
+            if not hasattr(get_drive_service, '_logged'):
+                print("Using Google Drive credentials from plain JSON GDRIVE_SA_KEY")
+                get_drive_service._logged = True
         except json.JSONDecodeError:
             raise ValueError("Failed to parse GDRIVE_SA_KEY. It's not valid JSON or base64-encoded JSON.")
     

@@ -174,12 +174,6 @@ class TimelapseProcessor:
         """Create a video from a single day's images."""
         print(f"Processing {folder_info['name']}...")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            images = self.get_images_from_folder(folder_info['id'], temp_dir)
-            if not images:
-                print(f"  No images found in {folder_info['name']}")
-                return None
-
         # Output path for daily video
         output_path = (
             Path(self.config["output"]["daily_dir"]) / f"{folder_info['name']}.mp4"
@@ -194,71 +188,78 @@ class TimelapseProcessor:
             print("  Daily video already exists, skipping")
             return output_path
 
-        if is_today:
-            print(f"  Reprocessing today's folder with {len(images)} images")
+        # Create temporary directory that persists through video creation
+        with tempfile.TemporaryDirectory() as temp_dir:
+            images = self.get_images_from_folder(folder_info['id'], temp_dir)
+            if not images:
+                print(f"  No images found in {folder_info['name']}")
+                return None
 
-        # Create video using ffmpeg with image sequence
-        # First, create a temporary file list
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            list_file = f.name
-            for img in images:
-                f.write(f"file '{img}'\n")
-                f.write("duration 0.033\n")  # 1/30 second per frame
-            # Add last image again to ensure it displays
-            f.write(f"file '{images[-1]}'\n")
+            if is_today:
+                print(f"  Reprocessing today's folder with {len(images)} images")
 
-        try:
-            cmd = [
-                "ffmpeg",
-                "-y",  # Overwrite output
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                list_file,
-                "-c:v",
-                self.config["video"]["codec"],
-                "-preset",
-                self.config["video"]["preset"],
-                "-crf",
-                str(self.config["video"]["crf"]),
-                "-pix_fmt",
-                "yuv420p",  # For compatibility
-                "-movflags",
-                "+faststart",  # For web streaming
-            ]
+            # Create video using ffmpeg with image sequence
+            # First, create a temporary file list
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+                list_file = f.name
+                for img in images:
+                    f.write(f"file '{img}'\n")
+                    f.write("duration 0.033\n")  # 1/30 second per frame
+                # Add last image again to ensure it displays
+                f.write(f"file '{images[-1]}'\n")
 
-            # Add scaling filter if max_width is specified
-            if "max_width" in self.config["video"]:
-                max_width = self.config["video"]["max_width"]
-                # Scale down only if wider than max_width, maintaining aspect ratio
-                cmd.extend(["-vf", f"scale={max_width}:-2:flags=lanczos"])
+            try:
+                cmd = [
+                    "ffmpeg",
+                    "-y",  # Overwrite output
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    list_file,
+                    "-c:v",
+                    self.config["video"]["codec"],
+                    "-preset",
+                    self.config["video"]["preset"],
+                    "-crf",
+                    str(self.config["video"]["crf"]),
+                    "-pix_fmt",
+                    "yuv420p",  # For compatibility
+                    "-movflags",
+                    "+faststart",  # For web streaming
+                ]
 
-            # Add bitrate limit if specified (optional, CRF usually better)
-            if "bitrate" in self.config["video"]:
-                cmd.extend(["-b:v", self.config["video"]["bitrate"]])
+                # Add scaling filter if max_width is specified
+                if "max_width" in self.config["video"]:
+                    max_width = self.config["video"]["max_width"]
+                    # Scale down only if wider than max_width, maintaining aspect ratio
+                    cmd.extend(["-vf", f"scale={max_width}:-2:flags=lanczos"])
 
-            cmd.append(str(output_path))
+                # Add bitrate limit if specified (optional, CRF usually better)
+                if "bitrate" in self.config["video"]:
+                    cmd.extend(["-b:v", self.config["video"]["bitrate"]])
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"  Error creating video: {result.stderr}")
-                raise subprocess.CalledProcessError(
-                    result.returncode, cmd, result.stdout, result.stderr
-                )
-            print(f"  Created daily video: {output_path.name}")
+                cmd.append(str(output_path))
 
-            # Update state
-            if folder_info["name"] not in self.state["processed_folders"]:
-                self.state["processed_folders"].append(folder_info["name"])
-                self.save_state()
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"  Error creating video: {result.stderr}")
+                    raise subprocess.CalledProcessError(
+                        result.returncode, cmd, result.stdout, result.stderr
+                    )
+                print(f"  Created daily video: {output_path.name}")
 
-            return output_path
+                # Update state
+                if folder_info["name"] not in self.state["processed_folders"]:
+                    self.state["processed_folders"].append(folder_info["name"])
+                    self.save_state()
 
-        finally:
-            # Clean up temp file
-            os.unlink(list_file)
+                return output_path
+
+            finally:
+                # Clean up temp file
+                os.unlink(list_file)
 
     def create_combined_video(
         self, video_files, output_name, use_full_compression=False
