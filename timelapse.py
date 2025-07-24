@@ -532,7 +532,7 @@ class TimelapseProcessor:
         """Generate metadata JSON for web frontend."""
         metadata = {
             "last_updated": datetime.now().isoformat(),
-            "total_days": len(all_daily_videos),
+            "total_days": 0,  # Will be calculated after we process weekly videos
             "latest_image": None,
             "latest_day": None,
             "current_week": None,
@@ -589,16 +589,14 @@ class TimelapseProcessor:
             except:
                 pass
 
-        # Get all week videos from the videos directory
-        videos_dir = Path(self.config["output"]["videos_dir"])
-        week_files = list(videos_dir.glob("timelapse_week_*.mp4"))
+        # Get all week videos from R2 storage (local files should already be uploaded)
+        r2_week_keys = self.list_r2_keys("timelapse/weeks/")
+        r2_week_filenames = [k.split('/')[-1] for k in r2_week_keys if k.endswith('.mp4') and 'timelapse_week_' in k]
 
-        for week_file in sorted(week_files):
+        for week_filename in sorted(r2_week_filenames):
             # Parse week start date from filename
-            week_date_str = week_file.stem.split("_")[
-                2
-            ]  # YYMMDD from timelapse_week_YYMMDD
             try:
+                week_date_str = week_filename.split("_")[2].split(".")[0]  # YYMMDD from timelapse_week_YYMMDD.mp4
                 year = 2000 + int(week_date_str[:2])
                 month = int(week_date_str[2:4])
                 day = int(week_date_str[4:6])
@@ -607,11 +605,11 @@ class TimelapseProcessor:
 
                 metadata["weekly_videos"].append(
                     {
-                        "filename": week_file.name,
+                        "filename": week_filename,
                         "monday_date": week_date_str,
                         "start": week_start.isoformat(),
                         "end": week_end.isoformat(),
-                        "r2_path": f"timelapse/weeks/{week_file.name}",
+                        "r2_path": f"timelapse/weeks/{week_filename}",
                     }
                 )
             except:
@@ -619,6 +617,12 @@ class TimelapseProcessor:
 
         # Sort weekly videos by date
         metadata["weekly_videos"].sort(key=lambda x: x["monday_date"])
+        
+        # Calculate total_days as days since the start of the first weekly video
+        if metadata["weekly_videos"]:
+            first_week_start = datetime.fromisoformat(metadata["weekly_videos"][0]["start"])
+            today = datetime.now().date()
+            metadata["total_days"] = (today - first_week_start.date()).days + 1
 
         return metadata
 
