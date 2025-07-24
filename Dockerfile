@@ -1,14 +1,16 @@
 # Use a slim Python base image
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Set the working directory
 WORKDIR /app
 
 # Install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg
+RUN apt-get update && apt-get install --no-install-recommends -y ffmpeg \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install uv, our package manager
-RUN pip install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy dependency definition files
 COPY pyproject.toml uv.lock ./
