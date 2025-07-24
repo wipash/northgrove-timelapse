@@ -10,6 +10,9 @@ dependencies = [
     "python-dateutil>=2.9.0.post0",
     "pyyaml>=6.0.2",
     "tqdm>=4.67.1",
+    "google-api-python-client>=2.138.0",
+    "google-auth-httplib2>=0.2.0",
+    "python-dotenv>=1.1.1",
 ]
 
 [dependency-groups]
