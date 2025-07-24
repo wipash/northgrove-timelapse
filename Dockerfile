@@ -22,4 +22,4 @@ RUN uv sync --no-dev
 COPY . .
 
 # Set the entrypoint for the container
-CMD ["uv", "run", "python", "worker.py"]
+CMD ["uv", "run", "--no-dev", "python", "worker.py"]

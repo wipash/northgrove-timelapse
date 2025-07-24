@@ -3,3 +3,7 @@ videos
 .claude
 .ruff_cache
 .venv
+*.json
+__pycache__
+*.pyc
+test*
