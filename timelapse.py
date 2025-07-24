@@ -822,9 +822,14 @@ class TimelapseProcessor:
             folders = all_folders
             print(f"Found {len(all_folders)} daily folders")
 
+        # Track which videos were processed this run (vs pulled from cache)
+        processed_this_run = set()
+        
         for folder_info in tqdm(folders, desc="Creating daily videos"):
             is_today = folder_info["name"] == latest_folder_name
-            self.create_daily_video(folder_info, is_today=is_today)
+            daily_video = self.create_daily_video(folder_info, is_today=is_today)
+            if daily_video:
+                processed_this_run.add(daily_video.stem)
 
         # Get ALL existing daily videos from both local and R2
         all_daily_videos = self.get_all_daily_videos()
@@ -845,9 +850,19 @@ class TimelapseProcessor:
         else:
             print("Skipping full timelapse (use --build-full to create it)")
 
-        # Create all week videos
+        # Create week videos - be smart about which weeks to process
         print("Creating week videos...")
-        all_weeks = self.get_all_weeks(all_daily_videos)
+        
+        # Determine processing mode based on days_limit
+        if days_limit and days_limit < 30:  # Ephemeral mode (small limit)
+            # Only process weeks that contain videos we actually processed this run
+            relevant_daily_videos = [v for v in all_daily_videos if Path(v).stem in processed_this_run]
+            all_weeks = self.get_all_weeks(relevant_daily_videos)
+            print(f"  Ephemeral mode: Only checking {len(all_weeks)} relevant weeks")
+        else:  # Local/recovery mode (no limit or large limit)
+            # Process all weeks for full regeneration capability
+            all_weeks = self.get_all_weeks(all_daily_videos)
+            print(f"  Full mode: Checking {len(all_weeks)} total weeks")
 
         # Find the current week for special handling
         current_week_monday = None
