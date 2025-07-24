@@ -32,7 +32,7 @@ class TimelapseProcessor:
         # Create output directories
         Path(self.config["output"]["videos_dir"]).mkdir(exist_ok=True)
         Path(self.config["output"]["daily_dir"]).mkdir(exist_ok=True)
-        
+
         # Create image cache directory
         self.image_cache_dir = Path("./videos/images")
         self.image_cache_dir.mkdir(exist_ok=True, parents=True)
@@ -148,7 +148,7 @@ class TimelapseProcessor:
         # Use cache directory specific to this folder
         cache_dir = self.image_cache_dir / folder_name
         cache_dir.mkdir(exist_ok=True, parents=True)
-        
+
         query = f"'{folder_id}' in parents and mimeType = 'image/jpeg' and name starts with 'TLS_'"
         results = self.drive_service.files().list(q=query, pageSize=1000, fields="files(id, name)").execute()
         files = results.get('files', [])
@@ -159,18 +159,18 @@ class TimelapseProcessor:
         # Check which files already exist in cache
         cached_files = []
         files_to_download = []
-        
+
         for file in files:
             cached_path = cache_dir / file['name']
             if cached_path.exists():
                 cached_files.append(cached_path)
             else:
                 files_to_download.append(file)
-        
+
         # Report cache status
         if cached_files:
             print(f"  Using {len(cached_files)} cached images")
-        
+
         # Download only missing files
         if files_to_download:
             print(f"  Downloading {len(files_to_download)} new images...")
@@ -617,7 +617,7 @@ class TimelapseProcessor:
 
         # Sort weekly videos by date
         metadata["weekly_videos"].sort(key=lambda x: x["monday_date"])
-        
+
         # Calculate total_days as days since the start of the first weekly video
         if metadata["weekly_videos"]:
             first_week_start = datetime.fromisoformat(metadata["weekly_videos"][0]["start"])
@@ -796,16 +796,16 @@ class TimelapseProcessor:
         """Remove cached images and daily videos older than max_age_days."""
         now = datetime.now()
         cutoff_date = now - timedelta(days=max_age_days)
-        
+
         # Clean up old image cache
         if self.image_cache_dir.exists():
             print(f"\nCleaning up image cache older than {max_age_days} days...")
             deleted_image_count = 0
-            
+
             for folder_dir in self.image_cache_dir.iterdir():
                 if not folder_dir.is_dir():
                     continue
-                    
+
                 # Parse date from folder name (e.g., TLST04A00879_250721065959)
                 try:
                     date_str = folder_dir.name.split("_")[1][:6]  # YYMMDD
@@ -813,7 +813,7 @@ class TimelapseProcessor:
                     month = int(date_str[2:4])
                     day = int(date_str[4:6])
                     folder_date = datetime(year, month, day)
-                    
+
                     if folder_date < cutoff_date:
                         # Remove entire folder
                         import shutil
@@ -821,21 +821,21 @@ class TimelapseProcessor:
                         deleted_image_count += 1
                         if deleted_image_count <= 3:  # Show first few deletions
                             print(f"  Removed old image cache: {folder_dir.name}")
-                            
+
                 except Exception as e:
                     print(f"  Warning: Could not process {folder_dir.name}: {e}")
-            
+
             if deleted_image_count > 3:
                 print(f"  ... and {deleted_image_count - 3} more folders")
-            
+
             print(f"  Total image cache folders cleaned up: {deleted_image_count}")
-        
+
         # Clean up old daily videos from local cache
         daily_dir = Path(self.config["output"]["daily_dir"])
         if daily_dir.exists():
             print(f"\nCleaning up local daily videos older than {max_age_days} days...")
             deleted_video_count = 0
-            
+
             for video_path in daily_dir.glob("*.mp4"):
                 # Parse date from video filename
                 try:
@@ -844,40 +844,40 @@ class TimelapseProcessor:
                     month = int(date_str[2:4])
                     day = int(date_str[4:6])
                     video_date = datetime(year, month, day)
-                    
+
                     if video_date < cutoff_date:
                         video_path.unlink()
                         deleted_video_count += 1
                         if deleted_video_count <= 3:
                             print(f"  Removed old daily video: {video_path.name}")
-                            
+
                 except Exception as e:
                     print(f"  Warning: Could not process {video_path.name}: {e}")
-            
+
             if deleted_video_count > 3:
                 print(f"  ... and {deleted_video_count - 3} more videos")
-                
+
             print(f"  Total local daily videos cleaned up: {deleted_video_count}")
-        
+
         # Clean up ALL weekly videos from local cache (they're regenerated from scratch)
         videos_dir = Path(self.config["output"]["videos_dir"])
         if videos_dir.exists():
             print(f"\nCleaning up all local weekly videos (regenerated fresh each run)...")
             deleted_week_count = 0
-            
+
             for week_path in videos_dir.glob("timelapse_week_*.mp4"):
                 try:
                     week_path.unlink()
                     deleted_week_count += 1
                     if deleted_week_count <= 3:
                         print(f"  Removed weekly video: {week_path.name}")
-                        
+
                 except Exception as e:
                     print(f"  Warning: Could not remove {week_path.name}: {e}")
-            
+
             if deleted_week_count > 3:
                 print(f"  ... and {deleted_week_count - 3} more videos")
-                
+
             print(f"  Total local weekly videos cleaned up: {deleted_week_count}")
 
     def process(self, days_limit=None, upload_all_weeks=False, build_full=False):
@@ -944,7 +944,7 @@ class TimelapseProcessor:
 
         # Track which videos were processed this run (vs pulled from cache)
         processed_this_run = set()
-        
+
         for folder_info in tqdm(folders, desc="Creating daily videos"):
             is_today = folder_info["name"] == latest_folder_name
             daily_video = self.create_daily_video(folder_info, is_today=is_today)
@@ -972,7 +972,7 @@ class TimelapseProcessor:
 
         # Create week videos - be smart about which weeks to process
         print("Creating week videos...")
-        
+
         # Determine processing mode based on days_limit
         if days_limit and days_limit < 30:  # Ephemeral mode (small limit)
             # Only process weeks that contain videos we actually processed this run
@@ -1081,7 +1081,7 @@ class TimelapseProcessor:
         # Clean up old daily videos from R2 cache (only if we have a current week)
         if current_week_monday and self.upload_enabled:
             self.cleanup_old_daily_videos(current_week_monday)
-        
+
         # Clean up old local cache (images and daily videos)
         if days_limit and days_limit < 30:  # Only cleanup in ephemeral mode
             self.cleanup_local_cache(max_age_days=14)
