@@ -179,13 +179,31 @@ class TimelapseProcessor:
             Path(self.config["output"]["daily_dir"]) / f"{folder_info['name']}.mp4"
         )
 
-        # Skip if already exists and in processed list, UNLESS it's today's folder
+        # R2 cache key for this daily video
+        r2_cache_key = f"cache/daily/{folder_info['name']}.mp4"
+
+        # Check R2 cache first (unless it's today's folder which we always reprocess)
+        if not is_today and self.check_r2_exists(r2_cache_key):
+            print(f"  Found in R2 cache, downloading...")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.download_from_r2(r2_cache_key, output_path):
+                print(f"  Downloaded from cache: {output_path.name}")
+                # Update state to mark as processed
+                if folder_info["name"] not in self.state["processed_folders"]:
+                    self.state["processed_folders"].append(folder_info["name"])
+                    self.save_state()
+                return output_path
+            else:
+                print("  Cache download failed, will recreate video")
+
+        # Skip if already exists locally and in processed list (for local runs)
         if (
             output_path.exists()
             and folder_info["name"] in self.state["processed_folders"]
             and not is_today
+            and not self.upload_enabled  # Only skip for local runs
         ):
-            print("  Daily video already exists, skipping")
+            print("  Daily video already exists locally, skipping")
             return output_path
 
         # Create temporary directory that persists through video creation
@@ -250,6 +268,10 @@ class TimelapseProcessor:
                     )
                 print(f"  Created daily video: {output_path.name}")
 
+                # Upload to R2 cache (except for today's video which changes frequently)
+                if not is_today:
+                    self.upload_to_r2(output_path, r2_cache_key)
+
                 # Update state
                 if folder_info["name"] not in self.state["processed_folders"]:
                     self.state["processed_folders"].append(folder_info["name"])
@@ -270,10 +292,33 @@ class TimelapseProcessor:
 
         output_path = Path(self.config["output"]["videos_dir"]) / output_name
 
+        # Ensure all video files exist locally (download from R2 if needed)
+        available_videos = []
+        for video in video_files:
+            video_path = Path(video)
+            if not video_path.exists():
+                # Try to download from R2 cache
+                r2_cache_key = f"cache/daily/{video_path.name}"
+                if self.check_r2_exists(r2_cache_key):
+                    print(f"  Downloading {video_path.name} from cache...")
+                    video_path.parent.mkdir(parents=True, exist_ok=True)
+                    if self.download_from_r2(r2_cache_key, video_path):
+                        available_videos.append(video_path)
+                    else:
+                        print(f"  Warning: Could not download {video_path.name}")
+                else:
+                    print(f"  Warning: {video_path.name} not found locally or in cache")
+            else:
+                available_videos.append(video_path)
+        
+        if not available_videos:
+            print("  No videos available for combining")
+            return None
+
         # Create concat list with absolute paths
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             list_file = f.name
-            for video in video_files:
+            for video in available_videos:
                 # Ensure we use absolute paths
                 abs_path = Path(video).absolute()
                 f.write(f"file '{abs_path}'\n")
@@ -570,6 +615,39 @@ class TimelapseProcessor:
         except Exception as e:
             print(f"  Upload failed: {e}")
 
+    def check_r2_exists(self, key):
+        """Check if a file exists in R2."""
+        if not self.upload_enabled:
+            return False
+        
+        try:
+            self.s3_client.head_object(
+                Bucket=self.config["r2"]["bucket_name"],
+                Key=key
+            )
+            return True
+        except self.s3_client.exceptions.NoSuchKey:
+            return False
+        except Exception as e:
+            print(f"Error checking R2 existence for {key}: {e}")
+            return False
+
+    def download_from_r2(self, key, local_path):
+        """Download a file from R2 to local path."""
+        if not self.upload_enabled:
+            return False
+        
+        try:
+            self.s3_client.download_file(
+                self.config["r2"]["bucket_name"],
+                key,
+                str(local_path)
+            )
+            return True
+        except Exception as e:
+            print(f"Error downloading {key} from R2: {e}")
+            return False
+
     def process(self, days_limit=None, upload_all_weeks=False, build_full=False):
         """Main processing function."""
         print("Starting timelapse processing...")
@@ -630,10 +708,21 @@ class TimelapseProcessor:
             monday_str = monday_date.strftime("%y%m%d")
             week_filename = f"timelapse_week_{monday_str}.mp4"
             week_path = Path(self.config["output"]["videos_dir"]) / week_filename
+            week_r2_key = f"timelapse/weeks/{week_filename}"
 
-            # Check if this week's video already exists
+            # For past weeks, check R2 first
+            if monday_date != current_week_monday and self.check_r2_exists(week_r2_key):
+                print(f"  Week {monday_str} video exists in R2, skipping creation")
+                # Download it if we need it locally and uploading all weeks
+                if upload_all_weeks and not week_path.exists():
+                    week_path.parent.mkdir(parents=True, exist_ok=True)
+                    if self.download_from_r2(week_r2_key, week_path):
+                        week_videos_to_upload.append(week_path)
+                continue
+
+            # Check if this week's video already exists locally
             if week_path.exists() and monday_date != current_week_monday:
-                print(f"  Week {monday_str} video already exists, skipping")
+                print(f"  Week {monday_str} video already exists locally, skipping")
                 if upload_all_weeks:
                     week_videos_to_upload.append(week_path)
                 continue
