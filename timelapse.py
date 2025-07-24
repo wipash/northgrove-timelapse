@@ -80,7 +80,7 @@ class TimelapseProcessor:
                 },
             },
             "download": {
-                "parallel_workers": int(os.environ.get("DOWNLOAD_WORKERS", 10)),
+                "parallel_workers": int(os.environ.get("DOWNLOAD_WORKERS", 5)),  # Reduced default
             },
         }
         if not all([
@@ -765,18 +765,62 @@ class TimelapseProcessor:
         print("Starting timelapse processing...")
 
         # Get all daily folders
-        folders = self.get_daily_folders()
-
-        # Limit to last N days if specified
+        all_folders = self.get_daily_folders()
+        
+        # Determine which folder is "today" from ALL folders (not limited set)
+        latest_folder_name = all_folders[-1]["name"] if all_folders else None
+        
+        # For efficiency, limit processing to recent days, but ensure current week is complete
         if days_limit:
-            folders = folders[-days_limit:]
-            print(f"Processing last {days_limit} days ({len(folders)} folders)")
+            # Start with the requested limit
+            folders_to_process = all_folders[-days_limit:]
+            
+            # But also ensure we have all days needed for current week compilation
+            if all_folders:
+                # Get current week date range
+                latest_date_str = latest_folder_name.split("_")[1][:6]  # YYMMDD
+                try:
+                    year = 2000 + int(latest_date_str[:2])
+                    month = int(latest_date_str[2:4])
+                    day = int(latest_date_str[4:6])
+                    latest_date = datetime(year, month, day)
+                    
+                    # Find Monday of current week
+                    days_since_monday = latest_date.weekday()
+                    current_week_monday = latest_date - timedelta(days=days_since_monday)
+                    
+                    # Ensure we process all days from current week Monday onwards
+                    current_week_folders = []
+                    for folder in all_folders:
+                        folder_date_str = folder["name"].split("_")[1][:6]
+                        try:
+                            folder_year = 2000 + int(folder_date_str[:2])
+                            folder_month = int(folder_date_str[2:4])
+                            folder_day = int(folder_date_str[4:6])
+                            folder_date = datetime(folder_year, folder_month, folder_day)
+                            
+                            if folder_date >= current_week_monday:
+                                current_week_folders.append(folder)
+                        except:
+                            continue
+                    
+                    # Combine recent days + current week days (removes duplicates)
+                    folder_names_to_process = set(f["name"] for f in folders_to_process)
+                    folder_names_to_process.update(f["name"] for f in current_week_folders)
+                    
+                    # Rebuild folders list maintaining order
+                    folders = [f for f in all_folders if f["name"] in folder_names_to_process]
+                    
+                except:
+                    # Fallback to original behavior if date parsing fails
+                    folders = folders_to_process
+            else:
+                folders = folders_to_process
+                
+            print(f"Processing {len(folders)} folders (including current week completion)")
         else:
-            print(f"Found {len(folders)} daily folders")
-
-        # Process new daily videos
-        # Determine which folder is "today" (the latest one) to avoid repeated directory scans
-        latest_folder_name = folders[-1]["name"] if folders else None
+            folders = all_folders
+            print(f"Found {len(all_folders)} daily folders")
 
         for folder_info in tqdm(folders, desc="Creating daily videos"):
             is_today = folder_info["name"] == latest_folder_name
