@@ -13,15 +13,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tqdm import tqdm
 import tempfile
-import shutil
 import gdrive
+import io
+from googleapiclient.http import MediaIoBaseDownload
+import yaml
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(override=True)
 
 
 class TimelapseProcessor:
     def __init__(self, upload_enabled=True):
         self.config = self._load_config_from_env()
         self.state_file = Path("state.json") # This will be managed in R2
-        self.state = self.load_state()
         self.upload_enabled = upload_enabled
 
         # Create output directories
@@ -38,6 +43,9 @@ class TimelapseProcessor:
             )
         else:
             self.s3_client = None
+
+        self.state = self.load_state()
+
 
         # Initialize Google Drive Service
         self.drive_service = gdrive.get_drive_service()
@@ -398,12 +406,12 @@ class TimelapseProcessor:
         events_file = Path("events.yaml")
         if not events_file.exists():
             return []
-        
+
         try:
             with open(events_file, "r") as f:
                 data = yaml.safe_load(f)
                 events = data.get("events", [])
-                
+
             # Process each event to add monday_date
             processed_events = []
             for event in events:
@@ -413,25 +421,25 @@ class TimelapseProcessor:
                         event_date = datetime.fromisoformat(event["date"])
                     else:
                         event_date = event["date"]
-                    
+
                     # Calculate the Monday of the week containing this event
                     days_since_monday = event_date.weekday()  # Monday = 0, Sunday = 6
                     monday = event_date - timedelta(days=days_since_monday)
-                    
+
                     # Format monday_date as YYMMDD to match video filename format
                     monday_str = monday.strftime("%y%m%d")
-                    
+
                     processed_event = {
                         "title": event.get("title", ""),
                         "date": event_date.isoformat(),
                         "monday_date": monday_str,
                     }
-                    
+
                     if "description" in event:
                         processed_event["description"] = event["description"]
-                    
+
                     processed_events.append(processed_event)
-            
+
             return processed_events
         except Exception as e:
             print(f"Warning: Failed to load events.yaml: {e}")
