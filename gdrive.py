@@ -3,9 +3,11 @@ import json
 import base64
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, BatchHttpRequest
 import io
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 def get_drive_service():
     """Authenticates with Google Drive and returns a service object.
@@ -74,3 +76,46 @@ def download_file(service, file_id, destination):
 
     with open(destination, 'wb') as f:
         f.write(fh.getvalue())
+
+def download_file_parallel(service, file_info, temp_dir):
+    """Helper function for parallel downloads. Returns the file path on success."""
+    try:
+        file_path = Path(temp_dir) / file_info['name']
+        download_file(service, file_info['id'], file_path)
+        return file_path
+    except Exception as e:
+        print(f"Error downloading {file_info['name']}: {e}")
+        return None
+
+def download_files_parallel(service, files, temp_dir, max_workers=10):
+    """Downloads multiple files in parallel using thread pool."""
+    downloaded_files = []
+    
+    # Create a thread-local storage for service objects
+    thread_local = threading.local()
+    
+    def get_thread_service():
+        # Each thread gets its own service instance to avoid conflicts
+        if not hasattr(thread_local, 'service'):
+            thread_local.service = get_drive_service()
+        return thread_local.service
+    
+    def download_worker(file_info):
+        thread_service = get_thread_service()
+        return download_file_parallel(thread_service, file_info, temp_dir)
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all download tasks
+        future_to_file = {executor.submit(download_worker, f): f for f in files}
+        
+        # Process completed downloads
+        for future in as_completed(future_to_file):
+            file_info = future_to_file[future]
+            try:
+                result = future.result()
+                if result:
+                    downloaded_files.append(result)
+            except Exception as e:
+                print(f"Download failed for {file_info['name']}: {e}")
+    
+    return downloaded_files

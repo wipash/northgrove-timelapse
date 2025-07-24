@@ -79,6 +79,9 @@ class TimelapseProcessor:
                     "fps": int(os.environ.get("FULL_VIDEO_FPS", 20)),
                 },
             },
+            "download": {
+                "parallel_workers": int(os.environ.get("DOWNLOAD_WORKERS", 10)),
+            },
         }
         if not all([
             config["source"]["path"],
@@ -142,11 +145,17 @@ class TimelapseProcessor:
         results = self.drive_service.files().list(q=query, pageSize=1000, fields="files(id, name)").execute()
         files = results.get('files', [])
 
-        downloaded_images = []
-        for item in tqdm(files, desc=f"Downloading images for folder {folder_id}", leave=False):
-            file_path = Path(temp_dir) / item['name']
-            gdrive.download_file(self.drive_service, item['id'], file_path)
-            downloaded_images.append(file_path)
+        if not files:
+            return []
+
+        # Use parallel downloads for speed
+        print(f"  Downloading {len(files)} images in parallel...")
+        downloaded_images = gdrive.download_files_parallel(
+            self.drive_service, 
+            files, 
+            temp_dir,
+            max_workers=self.config["download"]["parallel_workers"]
+        )
 
         def safe_sort_key(x):
             try:
