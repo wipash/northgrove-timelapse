@@ -663,17 +663,71 @@ class TimelapseProcessor:
             print(f"Error deleting {key} from R2: {e}")
             return False
 
-    def cleanup_old_daily_videos(self, all_daily_videos, current_week_monday):
-        """Remove daily videos from R2 cache for weeks that have been compiled."""
+    def list_r2_keys(self, prefix):
+        """List all keys in R2 with given prefix."""
         if not self.upload_enabled:
+            return []
+        
+        try:
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.config["r2"]["bucket_name"],
+                Prefix=prefix
+            )
+            
+            if 'Contents' not in response:
+                return []
+                
+            return [obj['Key'] for obj in response['Contents']]
+        except Exception as e:
+            print(f"Error listing R2 keys with prefix {prefix}: {e}")
+            return []
+
+    def get_all_daily_videos(self):
+        """Get list of all daily videos, checking both local and R2."""
+        daily_videos_dir = Path(self.config["output"]["daily_dir"])
+        daily_videos_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get local videos
+        local_videos = {v.name: v for v in daily_videos_dir.glob("*.mp4")}
+        
+        # Get R2 cached videos
+        r2_daily_keys = self.list_r2_keys("cache/daily/")
+        r2_video_names = {k.split('/')[-1]: k for k in r2_daily_keys if k.endswith('.mp4')}
+        
+        # Combine both sources, preferring local if exists
+        all_video_names = set(local_videos.keys()) | set(r2_video_names.keys())
+        
+        # Sort by name (which includes date)
+        sorted_names = sorted(all_video_names)
+        
+        # Return paths (local if exists, otherwise will be downloaded when needed)
+        video_paths = []
+        for name in sorted_names:
+            if name in local_videos:
+                video_paths.append(local_videos[name])
+            else:
+                # Return path where it would be if downloaded
+                video_paths.append(daily_videos_dir / name)
+        
+        return video_paths
+
+    def cleanup_old_daily_videos(self, current_week_monday):
+        """Remove daily videos from R2 cache for weeks that have been compiled."""
+        if not self.upload_enabled or not current_week_monday:
             return
         
         print("\nCleaning up old daily videos from R2 cache...")
         deleted_count = 0
         
-        for video_path in all_daily_videos:
+        # List all daily videos in R2 cache
+        r2_daily_keys = self.list_r2_keys("cache/daily/")
+        
+        for r2_key in r2_daily_keys:
+            if not r2_key.endswith('.mp4'):
+                continue
+                
             # Parse date from video filename
-            video_name = video_path.stem
+            video_name = r2_key.split('/')[-1].replace('.mp4', '')
             date_str = video_name.split("_")[1][:6]  # YYMMDD
             try:
                 year = 2000 + int(date_str[:2])
@@ -687,14 +741,13 @@ class TimelapseProcessor:
                 
                 # If this video is from a past week (not current week)
                 if video_monday < current_week_monday:
-                    r2_cache_key = f"cache/daily/{video_name}.mp4"
                     # Check if weekly video exists before deleting daily
                     week_monday_str = video_monday.strftime("%y%m%d")
                     week_r2_key = f"timelapse/weeks/timelapse_week_{week_monday_str}.mp4"
                     
                     if self.check_r2_exists(week_r2_key):
                         # Weekly video exists, safe to delete daily
-                        if self.delete_from_r2(r2_cache_key):
+                        if self.delete_from_r2(r2_key):
                             deleted_count += 1
                             if deleted_count <= 5:  # Show first few deletions
                                 print(f"  Deleted {video_name}.mp4 (week {week_monday_str} compiled)")
@@ -729,9 +782,8 @@ class TimelapseProcessor:
             is_today = folder_info["name"] == latest_folder_name
             self.create_daily_video(folder_info, is_today=is_today)
 
-        # Get ALL existing daily videos (not just the ones we just created)
-        daily_videos_dir = Path(self.config["output"]["daily_dir"])
-        all_daily_videos = sorted(daily_videos_dir.glob("*.mp4"))
+        # Get ALL existing daily videos from both local and R2
+        all_daily_videos = self.get_all_daily_videos()
 
         if not all_daily_videos:
             print("No daily videos found to combine")
@@ -850,7 +902,7 @@ class TimelapseProcessor:
 
         # Clean up old daily videos from R2 cache (only if we have a current week)
         if current_week_monday and self.upload_enabled:
-            self.cleanup_old_daily_videos(all_daily_videos, current_week_monday)
+            self.cleanup_old_daily_videos(current_week_monday)
 
         print("\nProcessing complete!")
 
