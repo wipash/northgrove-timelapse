@@ -8,7 +8,7 @@ def run_automated_process():
     print("Starting automated timelapse processing...")
     try:
         # In the automated environment, uploads should always be enabled.
-        processor = TimelapseProcessor(upload_enabled=True)
+        processor = TimelapseProcessor()
 
         # We process the last 3 days to catch any images that might have been
         # added late to the previous day's folder. The `create_daily_video`
