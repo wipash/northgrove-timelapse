@@ -32,6 +32,10 @@ class TimelapseProcessor:
         # Create output directories
         Path(self.config["output"]["videos_dir"]).mkdir(exist_ok=True)
         Path(self.config["output"]["daily_dir"]).mkdir(exist_ok=True)
+        
+        # Create image cache directory
+        self.image_cache_dir = Path("./videos/images")
+        self.image_cache_dir.mkdir(exist_ok=True, parents=True)
 
         # Initialize R2 client
         if self.upload_enabled:
@@ -136,11 +140,15 @@ class TimelapseProcessor:
         folders.sort(key=lambda x: x["date"])
         return folders
 
-    def get_images_from_folder(self, folder_id, temp_dir):
+    def get_images_from_folder(self, folder_id, folder_name):
         """
-        Lists and downloads images from a GDrive folder into a temporary directory.
-        Returns a list of local paths to the downloaded images.
+        Lists and downloads images from a GDrive folder into cache directory.
+        Returns a list of local paths to the images (cached or newly downloaded).
         """
+        # Use cache directory specific to this folder
+        cache_dir = self.image_cache_dir / folder_name
+        cache_dir.mkdir(exist_ok=True, parents=True)
+        
         query = f"'{folder_id}' in parents and mimeType = 'image/jpeg' and name starts with 'TLS_'"
         results = self.drive_service.files().list(q=query, pageSize=1000, fields="files(id, name)").execute()
         files = results.get('files', [])
@@ -148,14 +156,33 @@ class TimelapseProcessor:
         if not files:
             return []
 
-        # Use parallel downloads for speed
-        print(f"  Downloading {len(files)} images in parallel...")
-        downloaded_images = gdrive.download_files_parallel(
-            self.drive_service,
-            files,
-            temp_dir,
-            max_workers=self.config["download"]["parallel_workers"]
-        )
+        # Check which files already exist in cache
+        cached_files = []
+        files_to_download = []
+        
+        for file in files:
+            cached_path = cache_dir / file['name']
+            if cached_path.exists():
+                cached_files.append(cached_path)
+            else:
+                files_to_download.append(file)
+        
+        # Report cache status
+        if cached_files:
+            print(f"  Using {len(cached_files)} cached images")
+        
+        # Download only missing files
+        if files_to_download:
+            print(f"  Downloading {len(files_to_download)} new images...")
+            downloaded_images = gdrive.download_files_parallel(
+                self.drive_service,
+                files_to_download,
+                str(cache_dir),
+                max_workers=self.config["download"]["parallel_workers"]
+            )
+            all_images = cached_files + downloaded_images
+        else:
+            all_images = cached_files
 
         def safe_sort_key(x):
             try:
@@ -167,8 +194,8 @@ class TimelapseProcessor:
             except:
                 return 0
 
-        downloaded_images.sort(key=safe_sort_key)
-        return downloaded_images
+        all_images.sort(key=safe_sort_key)
+        return all_images
 
     def create_daily_video(self, folder_info, is_today=False):
         """Create a video from a single day's images."""
@@ -182,7 +209,16 @@ class TimelapseProcessor:
         # R2 cache key for this daily video
         r2_cache_key = f"cache/daily/{folder_info['name']}.mp4"
 
-        # Check R2 cache first (unless it's today's folder which we always reprocess)
+        # Check local cache first (unless it's today's folder which we always reprocess)
+        if output_path.exists() and not is_today:
+            print(f"  Using cached local daily video: {output_path.name}")
+            # Update state to mark as processed
+            if folder_info["name"] not in self.state["processed_folders"]:
+                self.state["processed_folders"].append(folder_info["name"])
+                self.save_state()
+            return output_path
+
+        # If not local, check R2 cache
         if not is_today and self.check_r2_exists(r2_cache_key):
             print(f"  Found in R2 cache, downloading...")
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,92 +232,84 @@ class TimelapseProcessor:
             else:
                 print("  Cache download failed, will recreate video")
 
-        # Skip if already exists locally and in processed list (for local runs)
-        if (
-            output_path.exists()
-            and folder_info["name"] in self.state["processed_folders"]
-            and not is_today
-            and not self.upload_enabled  # Only skip for local runs
-        ):
-            print("  Daily video already exists locally, skipping")
+        # Get images from cache or download if needed
+        images = self.get_images_from_folder(folder_info['id'], folder_info['name'])
+        if not images:
+            print(f"  No images found in {folder_info['name']}")
+            return None
+
+        if is_today:
+            print(f"  Reprocessing today's folder with {len(images)} images")
+
+        # Create video using ffmpeg with image sequence
+        # First, create a temporary file list
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            list_file = f.name
+            for img in images:
+                # Use absolute path for ffmpeg
+                abs_path = Path(img).resolve()
+                f.write(f"file '{abs_path}'\n")
+                f.write("duration 0.033\n")  # 1/30 second per frame
+            # Add last image again to ensure it displays
+            abs_path = Path(images[-1]).resolve()
+            f.write(f"file '{abs_path}'\n")
+
+        try:
+            cmd = [
+                "ffmpeg",
+                "-y",  # Overwrite output
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_file,
+                "-c:v",
+                self.config["video"]["codec"],
+                "-preset",
+                self.config["video"]["preset"],
+                "-crf",
+                str(self.config["video"]["crf"]),
+                "-pix_fmt",
+                "yuv420p",  # For compatibility
+                "-movflags",
+                "+faststart",  # For web streaming
+            ]
+
+            # Add scaling filter if max_width is specified
+            if "max_width" in self.config["video"]:
+                max_width = self.config["video"]["max_width"]
+                # Scale down only if wider than max_width, maintaining aspect ratio
+                cmd.extend(["-vf", f"scale={max_width}:-2:flags=lanczos"])
+
+            # Add bitrate limit if specified (optional, CRF usually better)
+            if "bitrate" in self.config["video"]:
+                cmd.extend(["-b:v", self.config["video"]["bitrate"]])
+
+            cmd.append(str(output_path))
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  Error creating video: {result.stderr}")
+                raise subprocess.CalledProcessError(
+                    result.returncode, cmd, result.stdout, result.stderr
+                )
+            print(f"  Created daily video: {output_path.name}")
+
+            # Upload to R2 cache (except for today's video which changes frequently)
+            if not is_today:
+                self.upload_to_r2(output_path, r2_cache_key)
+
+            # Update state
+            if folder_info["name"] not in self.state["processed_folders"]:
+                self.state["processed_folders"].append(folder_info["name"])
+                self.save_state()
+
             return output_path
 
-        # Create temporary directory that persists through video creation
-        with tempfile.TemporaryDirectory() as temp_dir:
-            images = self.get_images_from_folder(folder_info['id'], temp_dir)
-            if not images:
-                print(f"  No images found in {folder_info['name']}")
-                return None
-
-            if is_today:
-                print(f"  Reprocessing today's folder with {len(images)} images")
-
-            # Create video using ffmpeg with image sequence
-            # First, create a temporary file list
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-                list_file = f.name
-                for img in images:
-                    f.write(f"file '{img}'\n")
-                    f.write("duration 0.033\n")  # 1/30 second per frame
-                # Add last image again to ensure it displays
-                f.write(f"file '{images[-1]}'\n")
-
-            try:
-                cmd = [
-                    "ffmpeg",
-                    "-y",  # Overwrite output
-                    "-f",
-                    "concat",
-                    "-safe",
-                    "0",
-                    "-i",
-                    list_file,
-                    "-c:v",
-                    self.config["video"]["codec"],
-                    "-preset",
-                    self.config["video"]["preset"],
-                    "-crf",
-                    str(self.config["video"]["crf"]),
-                    "-pix_fmt",
-                    "yuv420p",  # For compatibility
-                    "-movflags",
-                    "+faststart",  # For web streaming
-                ]
-
-                # Add scaling filter if max_width is specified
-                if "max_width" in self.config["video"]:
-                    max_width = self.config["video"]["max_width"]
-                    # Scale down only if wider than max_width, maintaining aspect ratio
-                    cmd.extend(["-vf", f"scale={max_width}:-2:flags=lanczos"])
-
-                # Add bitrate limit if specified (optional, CRF usually better)
-                if "bitrate" in self.config["video"]:
-                    cmd.extend(["-b:v", self.config["video"]["bitrate"]])
-
-                cmd.append(str(output_path))
-
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    print(f"  Error creating video: {result.stderr}")
-                    raise subprocess.CalledProcessError(
-                        result.returncode, cmd, result.stdout, result.stderr
-                    )
-                print(f"  Created daily video: {output_path.name}")
-
-                # Upload to R2 cache (except for today's video which changes frequently)
-                if not is_today:
-                    self.upload_to_r2(output_path, r2_cache_key)
-
-                # Update state
-                if folder_info["name"] not in self.state["processed_folders"]:
-                    self.state["processed_folders"].append(folder_info["name"])
-                    self.save_state()
-
-                return output_path
-
-            finally:
-                # Clean up temp file
-                os.unlink(list_file)
+        finally:
+            # Clean up temp file
+            os.unlink(list_file)
 
     def create_combined_video(
         self, video_files, output_name, use_full_compression=False
@@ -760,6 +788,94 @@ class TimelapseProcessor:
 
         print(f"  Total daily videos cleaned up: {deleted_count}")
 
+    def cleanup_local_cache(self, max_age_days=14):
+        """Remove cached images and daily videos older than max_age_days."""
+        now = datetime.now()
+        cutoff_date = now - timedelta(days=max_age_days)
+        
+        # Clean up old image cache
+        if self.image_cache_dir.exists():
+            print(f"\nCleaning up image cache older than {max_age_days} days...")
+            deleted_image_count = 0
+            
+            for folder_dir in self.image_cache_dir.iterdir():
+                if not folder_dir.is_dir():
+                    continue
+                    
+                # Parse date from folder name (e.g., TLST04A00879_250721065959)
+                try:
+                    date_str = folder_dir.name.split("_")[1][:6]  # YYMMDD
+                    year = 2000 + int(date_str[:2])
+                    month = int(date_str[2:4])
+                    day = int(date_str[4:6])
+                    folder_date = datetime(year, month, day)
+                    
+                    if folder_date < cutoff_date:
+                        # Remove entire folder
+                        import shutil
+                        shutil.rmtree(folder_dir)
+                        deleted_image_count += 1
+                        if deleted_image_count <= 3:  # Show first few deletions
+                            print(f"  Removed old image cache: {folder_dir.name}")
+                            
+                except Exception as e:
+                    print(f"  Warning: Could not process {folder_dir.name}: {e}")
+            
+            if deleted_image_count > 3:
+                print(f"  ... and {deleted_image_count - 3} more folders")
+            
+            print(f"  Total image cache folders cleaned up: {deleted_image_count}")
+        
+        # Clean up old daily videos from local cache
+        daily_dir = Path(self.config["output"]["daily_dir"])
+        if daily_dir.exists():
+            print(f"\nCleaning up local daily videos older than {max_age_days} days...")
+            deleted_video_count = 0
+            
+            for video_path in daily_dir.glob("*.mp4"):
+                # Parse date from video filename
+                try:
+                    date_str = video_path.stem.split("_")[1][:6]  # YYMMDD
+                    year = 2000 + int(date_str[:2])
+                    month = int(date_str[2:4])
+                    day = int(date_str[4:6])
+                    video_date = datetime(year, month, day)
+                    
+                    if video_date < cutoff_date:
+                        video_path.unlink()
+                        deleted_video_count += 1
+                        if deleted_video_count <= 3:
+                            print(f"  Removed old daily video: {video_path.name}")
+                            
+                except Exception as e:
+                    print(f"  Warning: Could not process {video_path.name}: {e}")
+            
+            if deleted_video_count > 3:
+                print(f"  ... and {deleted_video_count - 3} more videos")
+                
+            print(f"  Total local daily videos cleaned up: {deleted_video_count}")
+        
+        # Clean up ALL weekly videos from local cache (they're regenerated from scratch)
+        videos_dir = Path(self.config["output"]["videos_dir"])
+        if videos_dir.exists():
+            print(f"\nCleaning up all local weekly videos (regenerated fresh each run)...")
+            deleted_week_count = 0
+            
+            for week_path in videos_dir.glob("timelapse_week_*.mp4"):
+                try:
+                    week_path.unlink()
+                    deleted_week_count += 1
+                    if deleted_week_count <= 3:
+                        print(f"  Removed weekly video: {week_path.name}")
+                        
+                except Exception as e:
+                    print(f"  Warning: Could not remove {week_path.name}: {e}")
+            
+            if deleted_week_count > 3:
+                print(f"  ... and {deleted_week_count - 3} more videos")
+                
+            print(f"  Total local weekly videos cleaned up: {deleted_week_count}")
+
     def process(self, days_limit=None, upload_all_weeks=False, build_full=False):
         """Main processing function."""
         print("Starting timelapse processing...")
@@ -910,7 +1026,6 @@ class TimelapseProcessor:
                     week_videos_to_upload.append(created_video)
 
         # Get latest image from ALL folders (not just processed ones)
-        all_folders = self.get_daily_folders()
         latest_image_data, latest_image_filename = self.get_latest_image(all_folders)
 
         latest_dest = None
@@ -962,6 +1077,10 @@ class TimelapseProcessor:
         # Clean up old daily videos from R2 cache (only if we have a current week)
         if current_week_monday and self.upload_enabled:
             self.cleanup_old_daily_videos(current_week_monday)
+        
+        # Clean up old local cache (images and daily videos)
+        if days_limit and days_limit < 30:  # Only cleanup in ephemeral mode
+            self.cleanup_local_cache(max_age_days=14)
 
         print("\nProcessing complete!")
 
