@@ -1,29 +1,39 @@
+import sys
 from timelapse import TimelapseProcessor
 
-def run_automated_process():
-    """
-    This is the entry point for the automated serverless process.
-    It creates the daily and weekly videos, but not the full timelapse.
-    """
-    print("Starting automated timelapse processing...")
-    try:
-        # In the automated environment, uploads should always be enabled.
-        processor = TimelapseProcessor()
 
-        # We process the last 3 days to catch any images that might have been
-        # added late to the previous day's folder. The `create_daily_video`
-        # function is smart enough to skip days that are already processed and
-        # haven't changed.
-        processor.process(
-            days_limit=3,
-            upload_all_weeks=False,
-            build_full=False
-        )
-        print("Automated timelapse processing finished successfully.")
+def run_daily_process():
+    """
+    Process daily images and create daily/weekly videos.
+    """
+    print("Starting daily timelapse processing...")
+    processor = TimelapseProcessor()
+    processor.process(days_limit=3, upload_all_weeks=False)
+    print("Daily timelapse processing finished successfully.")
+
+
+def run_full_build():
+    """
+    Build full timelapse from weekly videos only.
+    """
+    print("Starting full timelapse build...")
+    processor = TimelapseProcessor()
+    processor.build_full_only()
+    print("Full timelapse build finished successfully.")
+
+
+def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "daily"
+
+    try:
+        if mode == "full":
+            run_full_build()
+        else:
+            run_daily_process()
     except Exception as e:
-        print(f"An error occurred during automated processing: {e}")
-        # In a real-world scenario, you might want to send a notification here.
+        print(f"An error occurred during processing: {e}")
         raise
 
+
 if __name__ == '__main__':
-    run_automated_process()
+    main()

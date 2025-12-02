@@ -20,4 +20,5 @@ RUN uv sync --no-dev
 COPY . .
 
 # Set the entrypoint for the container
-CMD ["uv", "run", "--no-dev", "python", "-u", "worker.py"]
+# Args: (none) = daily processing, "full" = build full timelapse from weekly videos
+ENTRYPOINT ["uv", "run", "--no-dev", "python", "-u", "worker.py"]
