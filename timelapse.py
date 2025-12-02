@@ -743,6 +743,35 @@ class TimelapseProcessor:
 
         return video_paths
 
+    def get_all_weekly_videos_from_r2(self):
+        """Get list of all weekly videos from R2, downloading them locally."""
+        weeks_dir = Path(self.config["output"]["videos_dir"]) / "weeks"
+        weeks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get all weekly videos from R2
+        r2_week_keys = self.list_r2_keys("timelapse/weeks/")
+        week_videos = []
+
+        for r2_key in r2_week_keys:
+            if not r2_key.endswith('.mp4') or 'timelapse_week_' not in r2_key:
+                continue
+
+            filename = r2_key.split('/')[-1]
+            local_path = weeks_dir / filename
+
+            # Download if not already local
+            if not local_path.exists():
+                print(f"  Downloading {filename} from R2...")
+                if not self.download_from_r2(r2_key, local_path):
+                    print(f"  Warning: Failed to download {filename}")
+                    continue
+
+            week_videos.append(local_path)
+
+        # Sort by filename (which includes date)
+        week_videos.sort(key=lambda v: v.stem)
+        return week_videos
+
     def cleanup_old_daily_videos(self, current_week_monday):
         """Remove daily videos from R2 cache for weeks that have been compiled."""
         if not self.upload_enabled or not current_week_monday:
@@ -880,8 +909,28 @@ class TimelapseProcessor:
 
             print(f"  Total local weekly videos cleaned up: {deleted_week_count}")
 
-    def process(self, days_limit=None, upload_all_weeks=False, build_full=False):
-        """Main processing function."""
+    def build_full_only(self):
+        """Build full timelapse from weekly videos only - no daily processing."""
+        print("Building full timelapse from weekly videos...")
+
+        weekly_videos = self.get_all_weekly_videos_from_r2()
+        if not weekly_videos:
+            print("No weekly videos found in R2, cannot build full timelapse")
+            return
+
+        print(f"Found {len(weekly_videos)} weekly videos to combine")
+        full_video = self.create_combined_video(
+            weekly_videos, "timelapse_full.mp4", use_full_compression=True
+        )
+
+        if full_video and full_video.exists():
+            self.upload_to_r2(full_video, "timelapse/full.mp4")
+            print("\nFull timelapse build complete!")
+        else:
+            print("\nFailed to create full timelapse")
+
+    def process(self, days_limit=None, upload_all_weeks=False):
+        """Main processing function for daily/weekly videos."""
         print("Starting timelapse processing...")
 
         # Get all daily folders
@@ -960,16 +1009,6 @@ class TimelapseProcessor:
 
         print(f"\nFound {len(all_daily_videos)} total daily videos")
 
-        # Create full timelapse from ALL daily videos with extra compression
-        full_video = None
-        if build_full:
-            print("Creating full timelapse...")
-            full_video = self.create_combined_video(
-                all_daily_videos, "timelapse_full.mp4", use_full_compression=True
-            )
-        else:
-            print("Skipping full timelapse (use --build-full to create it)")
-
         # Create week videos - be smart about which weeks to process
         print("Creating week videos...")
 
@@ -1041,11 +1080,6 @@ class TimelapseProcessor:
 
         # Upload to R2
         print("\nUploading to R2...")
-        if full_video and full_video.exists():
-            self.upload_to_r2(full_video, "timelapse/full.mp4")
-        elif build_full and not full_video:
-            print("Full video was requested but not created successfully")
-
         if week_video and week_video.exists():
             # Upload with unique week name and also as current week
             week_key = f"timelapse/weeks/{week_video.stem}.mp4"
@@ -1107,7 +1141,7 @@ def main():
     parser.add_argument(
         "--build-full",
         action="store_true",
-        help="Build the full timelapse video (can be slow and large)",
+        help="Build full timelapse from weekly videos (standalone, skips daily processing)",
     )
 
     args = parser.parse_args()
@@ -1115,12 +1149,15 @@ def main():
     # Create processor with upload setting
     processor = TimelapseProcessor(upload_enabled=not args.no_upload)
 
-    # Process with optional days limit and upload settings
-    processor.process(
-        days_limit=args.days,
-        upload_all_weeks=args.upload_all_weeks,
-        build_full=args.build_full,
-    )
+    if args.build_full:
+        # Standalone full build from weekly videos - no daily processing
+        processor.build_full_only()
+    else:
+        # Normal daily/weekly processing
+        processor.process(
+            days_limit=args.days,
+            upload_all_weeks=args.upload_all_weeks,
+        )
 
 if __name__ == "__main__":
     main()
